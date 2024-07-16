@@ -1,0 +1,49 @@
+name: Book
+on:
+  pull_request:
+  push:
+    branches:
+    - 'main'
+jobs:
+  build:
+    name: Build book
+    runs-on: ubuntu-22.04
+    steps:
+    - uses: actions/checkout@v4
+    - run: make book
+    - uses: actions/upload-artifact@v4
+      with:
+        name: book
+        path: docs/book
+        retention-days: 1
+  publish:
+    name: Publish book on GitHub Pages
+    runs-on: ubuntu-22.04
+    needs: build
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: gh-pages
+    # do not remove helm chart related files if present
+    - run: ls | grep -v -E "index.yaml|.*\.tgz" | xargs rm -rf
+    - uses: actions/download-artifact@v4
+      with:
+        name: book
+    - run: git add .
+    - name: Check diff
+      run: |
+        diffs=$(git status -s)
+        if [ "$diffs" = "" ]; then
+          echo "NO_DIFF=1" >> $GITHUB_ENV
+        else
+          printf "%s\n" "$diffs"
+        fi
+    - name: Commit changes
+      if: env.NO_DIFF != '1'
+      run: |
+        git config --global user.name 'Cybozu Neco'
+        git config --global user.email 'cybozu-neco@users.noreply.github.com'
+        git commit -m 'update'
+    - name: Push to gh-pages
+      if: github.ref == 'refs/heads/main' && env.NO_DIFF != '1'
+      run: git push origin gh-pages

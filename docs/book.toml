@@ -1,0 +1,10 @@
+[book]
+language = "en"
+multilingual = false
+src = "."
+title = "Template Documentation"
+
+[output.html]
+git-repository-url = "https://github.com/cybozu-go/neco-template"
+edit-url-template = "https://github.com/cybozu-go/neco-template/edit/main/docs/{path}"
+site-url = "/neco-template/"
