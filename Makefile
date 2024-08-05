@@ -1,45 +1,65 @@
+SHELL:=/bin/bash
+
 BIN_DIR := $(shell pwd)/bin
 
-# Tool versions
-MDBOOK_VERSION = 0.4.37
-MDBOOK := $(BIN_DIR)/mdbook
+GO = go
+GO_VET_OPTS = -v
+GO_TEST_OPTS=-v -race
+
+GO_FMT=gofmt
+GO_FMT_OPTS=-s -l
 
 # Test tools
-STATICCHECK = $(BIN_DIR)/staticcheck
+CUSTOM_CHECKER = $(BIN_DIR)/custom-checker
+STATIC_CHECK = $(BIN_DIR)/staticcheck
 
-.PHONY: all
-all: test
+$(CUSTOM_CHECKER):
+	GOBIN=$(BIN_DIR) go install github.com/cybozu-go/golang-custom-analyzer/cmd/custom-checker@latest
 
-.PHONY: book
-book: $(MDBOOK)
-	rm -rf docs/book
-	cd docs; $(MDBOOK) build
+$(STATIC_CHECK):
+	GOBIN=$(BIN_DIR) go install honnef.co/go/tools/cmd/staticcheck@latest
 
+
+# Build
+CMD_DIRS:=$(wildcard cmd/*)
+CMDS:=$(subst cmd,bin,$(CMD_DIRS))
+
+.SECONDEXPANSION:
+bin/%:
+	$(GO) build $(GO_BUILD_OPT) -o $@ ./cmd/$*
+
+
+.PHONY: fmt
+fmt:
+	$(GO_FMT) $(GO_FMT_OPTS) .
+
+.PHONY: mod
+mod:
+	$(GO) mod tidy
+
+.PHONY: check-diff
+check-diff: mod fmt
+	git diff --exit-code --name-only
+
+.PHONY: vet
+vet:
+	$(GO) vet $(GO_VET_OPTS) ./...
 
 .PHONY: test
-test:
-	if find . -name go.mod | grep -q go.mod; then \
-		$(MAKE) test-go; \
-	fi
+test: vet check-diff $(STATIC_CHECK) $(CUSTOM_CHECKER)
+	$(STATIC_CHECK) ./...
+	test -z "$$($(CUSTOM_CHECKER) -restrictpkg.packages=html/template,log ./... 2>&1 | tee /dev/stderr)"
+	$(GO) test $(GO_TEST_OPTS) ./...
 
-.PHONY: test-go
-test-go: test-tools
-	test -z "$$(gofmt -s -l . | tee /dev/stderr)"
-	$(STATICCHECK) ./...
-	go install ./...
-	go test -race -v ./...
-	go vet ./...
+.PHONY: build
+build: $(CMDS)
 
+.PHONY: clean
+clean:
+	-$(GO) clean
+	-rm $(RM_OPTS) $(BIN_DIR)
 
-##@ Tools
+.PHONY: all
+all: test build
 
-$(MDBOOK):
-	mkdir -p bin
-	curl -fsL https://github.com/rust-lang/mdBook/releases/download/v$(MDBOOK_VERSION)/mdbook-v$(MDBOOK_VERSION)-x86_64-unknown-linux-gnu.tar.gz | tar -C bin -xzf -
-
-.PHONY: test-tools
-test-tools: $(STATICCHECK)
-
-$(STATICCHECK):
-	mkdir -p $(BIN_DIR)
-	GOBIN=$(BIN_DIR) go install honnef.co/go/tools/cmd/staticcheck@latest
+.DEFAULT_GOAL=all
