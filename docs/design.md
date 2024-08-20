@@ -45,7 +45,7 @@ flowchart LR
         linkStyle 0,1,2 stroke: indianred;
 
         kubelet -- " b-1 create pod " --> natClient
-        kubelet -- " b-2 send CNI Add " --> cniPlugin
+        kubelet -- " b-2 send CNI Add/Del " --> cniPlugin
         cniPlugin -- " b-3 send RPC call " --> ponad
         ponad -- " b-4 get Egress resource " --> egress
         ponad -- " b-4 get NAT Client Pod resource " --> pod
@@ -64,8 +64,9 @@ Users can create a NAT Pod with a Egress Custom Resource.
 When a Egress resource is created, the Egress Controller creates a NAT Pod and a ClusterIP Service (`a-1`, `a-2`).
 
 When a user want to send a request with NAT, the user creates a NAT client Pod with an annotation.  
-Ponad which is deployed as daemonset, watches Pod resources.
-When a Pod with the annotation is created, Ponad configures the Pod to be routed to NAT Pod via the ClusterIP Service.  (`b-1`, `b-2`, `b-3`, `b-4`).
+Ponad which is deployed as daemonset, watches Pod resources.  
+When a Pod with the annotation is created, Ponad configures the Pod to be routed to NAT Pod via the ClusterIP Service.
+When a NAT client Pod is deleted, Pona CNI plugin is received a CNI Del and Ponad removes the configuration and NAT Pod removes the configuration corresponding to the NAT client (`b-1`, `b-2`, `b-3`, `b-4`).
 
 A request from a NAT client Pod is routed to the NAT Pod via the ClusterIP Service, and the NAT Pod performs SNAT and sends the request to the external host.
 
