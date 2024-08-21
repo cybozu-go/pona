@@ -1,0 +1,23 @@
+# permissions for end users to view egresses.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: pona
+    app.kubernetes.io/managed-by: kustomize
+  name: egress-viewer-role
+rules:
+- apiGroups:
+  - pona.cybozu.com
+  resources:
+  - egresses
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - pona.cybozu.com
+  resources:
+  - egresses/status
+  verbs:
+  - get

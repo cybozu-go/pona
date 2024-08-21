@@ -1,0 +1,9 @@
+apiVersion: pona.cybozu.com/v1beta1
+kind: Egress
+metadata:
+  labels:
+    app.kubernetes.io/name: pona
+    app.kubernetes.io/managed-by: kustomize
+  name: egress-sample
+spec:
+  # TODO(user): Add fields here
