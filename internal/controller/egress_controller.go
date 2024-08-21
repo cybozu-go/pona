@@ -19,6 +19,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	rbacv1 "k8s.io/api/rbac/v1"
 )
 
 const (
@@ -32,6 +33,7 @@ const (
 	egressDefaultCpuRequest  = "100m"
 	egressDefaultMemRequest  = "200Mi"
 	egressServiceAccountName = "egress"
+	egressCRBName = "egress"
 )
 
 // TODO: Change this
@@ -142,6 +144,18 @@ func (r *EgressReconciler) reconcileServiceAccount(ctx context.Context, eg *pona
 	}
 
 	return nil
+}
+
+func (r *EgressReconciler) reconcileCRB(ctx context.Context) error {
+	crb := &rbacv1.ClusterRoleBinding{}
+	if err := r.Get(ctx, client.ObjectKey{Name: egressCRBName}, crb); err != nil {
+		if apierrors.IsNotFound(err){
+			// TODO create CRB
+			return nil
+		}
+		return err
+	}
+
 }
 
 func (r *EgressReconciler) reconcileDeployment(ctx context.Context, eg *ponav1beta1.Egress) error {
@@ -337,7 +351,7 @@ func (r *EgressReconciler) reconcilePodTemplate(eg *ponav1beta1.Egress, deploy *
 		target.Labels[k] = v
 	}
 
-	//TODO: add service account for Egress, pod watch/get/list...
+	podSpec.ServiceAccountName = egressServiceAccountName
 	podSpec.Volumes = r.addVolumes(podSpec.Volumes)
 
 	var egressContainer *corev1.Container
