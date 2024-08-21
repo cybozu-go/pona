@@ -2,17 +2,20 @@ package controller
 
 import (
 	"context"
+	"fmt"
 
 	ponav1beta1 "github.com/cybozu-go/pona/api/v1beta1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -41,6 +44,8 @@ const (
 type EgressReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+
+	Port int32
 }
 
 // +kubebuilder:rbac:groups=pona.cybozu.com,resources=egresses,verbs=get;list;watch;create;update;patch;delete
@@ -80,13 +85,13 @@ func (r *EgressReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, nil
 	}
 
-	if err = r.reconcileDeployment(ctx, egress); err != nil {
+	if err = r.reconcileDeployment(ctx, &egress); err != nil {
 		result, err2 := r.updateStatus(ctx, egress)
 		logger.Error(err2, "unable to update status")
 		return result, err
 	}
 
-	if err = r.reconcileService(ctx, egress); err != nil {
+	if err = r.reconcileService(ctx, &egress); err != nil {
 		result, err2 := r.updateStatus(ctx, egress)
 		logger.Error(err2, "unable to update status")
 		return result, err
@@ -95,14 +100,111 @@ func (r *EgressReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	return ctrl.Result{}, nil
 }
 
-func (r *EgressReconciler) reconcileDeployment(ctx context.Context, egress ponav1beta1.Egress) error {
+func (r *EgressReconciler) reconcileService(ctx context.Context, egress *ponav1beta1.Egress) error {
+	logger := log.FromContext(ctx)
+
+	svc := &corev1.Service{}
+	svc.SetName(egress.Name)
+	svc.SetNamespace(egress.Namespace)
+
+	result, err := ctrl.CreateOrUpdate(ctx, r.Client, svc, func() error {
+		if svc.DeletionTimestamp != nil {
+			return nil
+		}
+
+		if svc.Labels == nil {
+			svc.Labels = make(map[string]string)
+		}
+		labels := appLabels(egress.Name)
+		for k, v := range labels {
+			svc.Labels[k] = v
+		}
+
+		// set immutable fields only for a new object
+		if svc.CreationTimestamp.IsZero() {
+			if err := ctrl.SetControllerReference(egress, svc, r.Scheme); err != nil {
+				return err
+			}
+		}
+
+		svc.Spec.Type = corev1.ServiceTypeClusterIP
+		svc.Spec.Selector = labels
+		svc.Spec.Ports = []corev1.ServicePort{{
+			Port:       r.Port,
+			TargetPort: intstr.FromInt(int(r.Port)),
+			Protocol:   corev1.ProtocolUDP,
+		}}
+		svc.Spec.SessionAffinity = egress.Spec.SessionAffinity
+		if egress.Spec.SessionAffinityConfig != nil {
+			sac := &corev1.SessionAffinityConfig{}
+			egress.Spec.SessionAffinityConfig.DeepCopyInto(sac)
+			svc.Spec.SessionAffinityConfig = sac
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	if result != controllerutil.OperationResultNone {
+		logger.Info(string(result) + " service")
+	}
+	return nil
+}
+
+func (r *EgressReconciler) reconcileDeployment(ctx context.Context, egress *ponav1beta1.Egress) error {
 	logger := log.FromContext(ctx)
 
 	dep := &appsv1.Deployment{}
-	dep.SetNamespace(egress.Namespace)
 	dep.SetName(egress.Name)
-	result, err := ctrl.CreateOrUpdate(ctx, r.Client, dep, func() error {
-	})
+	dep.SetNamespace(egress.Namespace)
+
+	result, err := ctrl.CreateOrUpdate(ctx, r.Client, dep,
+		func() error {
+			if dep.DeletionTimestamp != nil {
+				return nil
+			}
+
+			if dep.Labels == nil {
+				dep.Labels = make(map[string]string)
+			}
+
+			labels := appLabels(egress.Name)
+			for k, v := range labels {
+				dep.Labels[k] = v
+			}
+
+			if dep.CreationTimestamp.IsZero() {
+				if err := ctrl.SetControllerReference(egress, dep, r.Scheme); err != nil {
+					return err
+				}
+				dep.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels}
+			}
+
+			if dep.Spec.Replicas == nil || *dep.Spec.Replicas != egress.Spec.Replicas {
+				replicas := egress.Spec.Replicas
+				dep.Spec.Replicas = &replicas
+			}
+
+			if egress.Spec.Strategy != nil {
+				egress.Spec.Strategy.DeepCopyInto(&dep.Spec.Strategy)
+			}
+			r.reconcilePodTemplate(egress, dep)
+			return nil
+		})
+	if err != nil {
+		return fmt.Errorf("failed to create or update deployment: %w", err)
+	}
+
+	if result != controllerutil.OperationResultNone {
+		logger.Info("deployment is created or updated",
+			"result", result,
+			"api_version", dep.APIVersion,
+			"kind", dep.Kind,
+			"name", dep.Name,
+			"namespace", dep.Namespace,
+		)
+	}
 
 	return nil
 }
