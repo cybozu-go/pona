@@ -7,6 +7,7 @@ import (
 	ponav1beta1 "github.com/cybozu-go/pona/api/v1beta1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -85,16 +86,22 @@ func (r *EgressReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, nil
 	}
 
+	defer func() {
+		if err := r.updateStatus(ctx, &egress); err != nil {
+			logger.Error(err, "unable to update status",
+				"api_version", egress.APIVersion,
+				"kind", egress.Kind,
+				"name", egress.Name,
+				"namespace", egress.Namespace)
+		}
+	}()
+
 	if err = r.reconcileDeployment(ctx, &egress); err != nil {
-		result, err2 := r.updateStatus(ctx, egress)
-		logger.Error(err2, "unable to update status")
-		return result, err
+		return ctrl.Result{}, err
 	}
 
 	if err = r.reconcileService(ctx, &egress); err != nil {
-		result, err2 := r.updateStatus(ctx, egress)
-		logger.Error(err2, "unable to update status")
-		return result, err
+		return ctrl.Result{}, err
 	}
 
 	return ctrl.Result{}, nil
@@ -209,6 +216,60 @@ func (r *EgressReconciler) reconcileDeployment(ctx context.Context, egress *pona
 			"kind", dep.Kind,
 			"name", dep.Name,
 			"namespace", dep.Namespace,
+		)
+	}
+
+	return nil
+}
+
+func (r *EgressReconciler) reconcilePDB(ctx context.Context, egress *ponav1beta1.Egress) error {
+	logger := log.FromContext(ctx)
+	if egress.Spec.PodDisruptionBudget == nil {
+		return nil
+	}
+
+	pdb := &policyv1.PodDisruptionBudget{}
+	pdb.SetNamespace(egress.Namespace)
+	pdb.SetName(egress.Name)
+
+	result, err := ctrl.CreateOrUpdate(ctx, r.Client, pdb, func() error {
+		if pdb.DeletionTimestamp != nil {
+			return nil
+		}
+
+		if pdb.Labels == nil {
+			pdb.Labels = make(map[string]string)
+		}
+		for k, v := range appLabels(egress.Name) {
+			pdb.Labels[k] = v
+		}
+		if pdb.CreationTimestamp.IsZero() {
+			if err := ctrl.SetControllerReference(egress, pdb, r.Scheme); err != nil {
+				return err
+			}
+		}
+		if egress.Spec.PodDisruptionBudget.MinAvailable != nil {
+			pdb.Spec.MinAvailable = egress.Spec.PodDisruptionBudget.MinAvailable
+		}
+		if egress.Spec.PodDisruptionBudget.MaxUnavailable != nil {
+			pdb.Spec.MaxUnavailable = egress.Spec.PodDisruptionBudget.MaxUnavailable
+		}
+		pdb.Spec.Selector = &metav1.LabelSelector{
+			MatchLabels: appLabels(egress.Name),
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create or update PDB: %w", err)
+	}
+
+	if result != controllerutil.OperationResultNone {
+		logger.Info("PDB is created or updated",
+			"result", result,
+			"api_version", pdb.APIVersion,
+			"kind", pdb.Kind,
+			"name", pdb.Name,
+			"namespace", pdb.Namespace,
 		)
 	}
 
@@ -330,15 +391,25 @@ func (r *EgressReconciler) reconcilePodTemplate(egress *ponav1beta1.Egress, depl
 	podSpec.DeepCopyInto(&target.Spec)
 }
 
-func (r *EgressReconciler) updateStatus(ctx context.Context, eg *ponav1beta1.Egress) error{
-	if eg.Status.Selector != selString || eg.Status.Replicas != dep.Status.AvailableReplicas {
-		eg.Status.Selector = selString
-		eg.Status.Replicas = dep.Status.AvailableReplicas
-		if err := r.Status().Update(ctx, eg); err != nil {
-			return err
-		}
-		log.Info("updated status")
+func (r *EgressReconciler) updateStatus(ctx context.Context, eg *ponav1beta1.Egress) error {
+	dep := &appsv1.Deployment{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: eg.Namespace, Name: eg.Name}, dep); err != nil {
+		return fmt.Errorf("failed to get deployment for updateStatus: %w", err)
 	}
+	sel, err := metav1.LabelSelectorAsSelector(dep.Spec.Selector)
+	if err != nil {
+		return fmt.Errorf("failed to convert labelSelector: %w", err)
+	}
+	selString := sel.String()
+
+	if eg.Status.Selector == selString && eg.Status.Replicas == dep.Status.AvailableReplicas {
+		// no change
+		return nil
+	}
+
+	eg.Status.Selector = selString
+	eg.Status.Replicas = dep.Status.AvailableReplicas
+	return r.Status().Update(ctx, eg)
 }
 
 // addVolumes adds volumes required by coil
