@@ -106,6 +106,7 @@ type EgressStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:resource:shortName={eg}
 // +kubebuilder:subresource:scale:selectorpath=.status.selector,specpath=.spec.replicas,statuspath=.status.replicas
 
 // Egress is the Schema for the egresses API
