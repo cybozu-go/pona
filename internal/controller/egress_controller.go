@@ -147,7 +147,13 @@ func (r *EgressReconciler) reconcileService(ctx context.Context, egress *ponav1b
 	}
 
 	if result != controllerutil.OperationResultNone {
-		logger.Info(string(result) + " service")
+		logger.Info("service is created or updated",
+			"result", result,
+			"api_version", svc.APIVersion,
+			"kind", svc.Kind,
+			"name", svc.Name,
+			"namespace", svc.Namespace,
+		)
 	}
 	return nil
 }
@@ -324,20 +330,14 @@ func (r *EgressReconciler) reconcilePodTemplate(egress *ponav1beta1.Egress, depl
 	podSpec.DeepCopyInto(&target.Spec)
 }
 
-// SetupWithManager sets up the controller with the Manager.
-func (r *EgressReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(mgr).
-		For(&ponav1beta1.Egress{}).
-		Owns(&appsv1.Deployment{}).
-		Owns(&corev1.Service{}).
-		Complete(r)
-}
-
-func appLabels(name string) map[string]string {
-	return map[string]string{
-		labelAppName:      "pona",
-		labelAppInstance:  name,
-		labelAppComponent: "egress",
+func (r *EgressReconciler) updateStatus(ctx context.Context, eg *ponav1beta1.Egress) error{
+	if eg.Status.Selector != selString || eg.Status.Replicas != dep.Status.AvailableReplicas {
+		eg.Status.Selector = selString
+		eg.Status.Replicas = dep.Status.AvailableReplicas
+		if err := r.Status().Update(ctx, eg); err != nil {
+			return err
+		}
+		log.Info("updated status")
 	}
 }
 
@@ -394,4 +394,21 @@ func (r *EgressReconciler) addVolumeMounts(mounts []corev1.VolumeMount) []corev1
 	})
 
 	return mounts
+}
+
+// SetupWithManager sets up the controller with the Manager.
+func (r *EgressReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	return ctrl.NewControllerManagedBy(mgr).
+		For(&ponav1beta1.Egress{}).
+		Owns(&appsv1.Deployment{}).
+		Owns(&corev1.Service{}).
+		Complete(r)
+}
+
+func appLabels(name string) map[string]string {
+	return map[string]string{
+		labelAppName:      "pona",
+		labelAppInstance:  name,
+		labelAppComponent: "egress",
+	}
 }
