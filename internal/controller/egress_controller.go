@@ -2,13 +2,14 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	ponav1beta1 "github.com/cybozu-go/pona/api/v1beta1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -27,9 +28,10 @@ const (
 )
 
 const (
-	egressImage             = "ghcr.io/cybozu-go/coil:2.7.2"
-	egressDefaultCpuRequest = "100m"
-	egressDefaultMemRequest = "200Mi"
+	egressImage              = "ghcr.io/cybozu-go/coil:2.7.2"
+	egressDefaultCpuRequest  = "100m"
+	egressDefaultMemRequest  = "200Mi"
+	egressServiceAccountName = "egress"
 )
 
 // TODO: Change this
@@ -69,50 +71,143 @@ type EgressReconciler struct {
 func (r *EgressReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	var egress ponav1beta1.Egress
-	err := r.Get(ctx, req.NamespacedName, &egress)
-	if errors.IsNotFound(err) {
-		return ctrl.Result{}, nil
-	}
-	if err != nil {
+	var eg ponav1beta1.Egress
+	if err := r.Get(ctx, req.NamespacedName, &eg); err != nil {
+		if apierrors.IsNotFound(err) {
+			return ctrl.Result{}, nil
+		}
 		logger.Error(err, "unable to get Egress",
+			"api_version", eg.APIVersion,
+			"kind", eg.Kind,
 			"name", req.Name,
 			"namespace", req.Namespace,
 		)
 		return ctrl.Result{}, err
 	}
 
-	if !egress.ObjectMeta.DeletionTimestamp.IsZero() {
+	if !eg.ObjectMeta.DeletionTimestamp.IsZero() {
 		return ctrl.Result{}, nil
 	}
 
 	defer func() {
-		if err := r.updateStatus(ctx, &egress); err != nil {
+		if err := r.updateStatus(ctx, &eg); err != nil {
 			logger.Error(err, "unable to update status",
-				"api_version", egress.APIVersion,
-				"kind", egress.Kind,
-				"name", egress.Name,
-				"namespace", egress.Namespace)
+				"api_version", eg.APIVersion,
+				"kind", eg.Kind,
+				"name", eg.Name,
+				"namespace", eg.Namespace)
 		}
 	}()
 
-	if err = r.reconcileDeployment(ctx, &egress); err != nil {
+	if err := r.reconcileServiceAccount(ctx, &eg); err != nil {
 		return ctrl.Result{}, err
 	}
 
-	if err = r.reconcileService(ctx, &egress); err != nil {
+	if err := r.reconcileDeployment(ctx, &eg); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	if err := r.reconcileService(ctx, &eg); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	if err := r.reconcilePDB(ctx, &eg); err != nil {
 		return ctrl.Result{}, err
 	}
 
 	return ctrl.Result{}, nil
 }
 
-func (r *EgressReconciler) reconcileService(ctx context.Context, egress *ponav1beta1.Egress) error {
+func (r *EgressReconciler) reconcileServiceAccount(ctx context.Context, eg *ponav1beta1.Egress) error {
+	if eg != nil {
+		return errors.New("eg is nil")
+	}
+	logger := log.FromContext(ctx)
+
+	sa := &corev1.ServiceAccount{}
+	name := egressServiceAccountName
+	namespace := eg.Namespace
+
+	if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, sa); err != nil {
+		if apierrors.IsNotFound(err) {
+			sa.SetName(name)
+			sa.SetNamespace(namespace)
+			logger.Info("creating service account for egress",
+				"name", name,
+				"namespace", namespace,
+			)
+			return r.Create(ctx, sa)
+		}
+		return err
+	}
+
+	return nil
+}
+
+func (r *EgressReconciler) reconcileDeployment(ctx context.Context, eg *ponav1beta1.Egress) error {
+	logger := log.FromContext(ctx)
+
+	dep := &appsv1.Deployment{}
+	dep.SetName(eg.Name)
+	dep.SetNamespace(eg.Namespace)
+
+	result, err := ctrl.CreateOrUpdate(ctx, r.Client, dep,
+		func() error {
+			if dep.DeletionTimestamp != nil {
+				return nil
+			}
+
+			if dep.Labels == nil {
+				dep.Labels = make(map[string]string)
+			}
+
+			labels := appLabels(eg.Name)
+			for k, v := range labels {
+				dep.Labels[k] = v
+			}
+
+			if dep.CreationTimestamp.IsZero() {
+				if err := ctrl.SetControllerReference(eg, dep, r.Scheme); err != nil {
+					return err
+				}
+				dep.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels}
+			}
+
+			if dep.Spec.Replicas == nil || *dep.Spec.Replicas != eg.Spec.Replicas {
+				replicas := eg.Spec.Replicas
+				dep.Spec.Replicas = &replicas
+			}
+
+			if eg.Spec.Strategy != nil {
+				eg.Spec.Strategy.DeepCopyInto(&dep.Spec.Strategy)
+			}
+
+			r.reconcilePodTemplate(eg, dep)
+			return nil
+		})
+	if err != nil {
+		return fmt.Errorf("failed to create or update deployment: %w", err)
+	}
+
+	if result != controllerutil.OperationResultNone {
+		logger.Info("deployment is created or updated",
+			"result", result,
+			"api_version", dep.APIVersion,
+			"kind", dep.Kind,
+			"name", dep.Name,
+			"namespace", dep.Namespace,
+		)
+	}
+
+	return nil
+}
+
+func (r *EgressReconciler) reconcileService(ctx context.Context, eg *ponav1beta1.Egress) error {
 	logger := log.FromContext(ctx)
 
 	svc := &corev1.Service{}
-	svc.SetName(egress.Name)
-	svc.SetNamespace(egress.Namespace)
+	svc.SetName(eg.Name)
+	svc.SetNamespace(eg.Namespace)
 
 	result, err := ctrl.CreateOrUpdate(ctx, r.Client, svc, func() error {
 		if svc.DeletionTimestamp != nil {
@@ -122,14 +217,14 @@ func (r *EgressReconciler) reconcileService(ctx context.Context, egress *ponav1b
 		if svc.Labels == nil {
 			svc.Labels = make(map[string]string)
 		}
-		labels := appLabels(egress.Name)
+		labels := appLabels(eg.Name)
 		for k, v := range labels {
 			svc.Labels[k] = v
 		}
 
 		// set immutable fields only for a new object
 		if svc.CreationTimestamp.IsZero() {
-			if err := ctrl.SetControllerReference(egress, svc, r.Scheme); err != nil {
+			if err := ctrl.SetControllerReference(eg, svc, r.Scheme); err != nil {
 				return err
 			}
 		}
@@ -141,10 +236,10 @@ func (r *EgressReconciler) reconcileService(ctx context.Context, egress *ponav1b
 			TargetPort: intstr.FromInt(int(r.Port)),
 			Protocol:   corev1.ProtocolUDP,
 		}}
-		svc.Spec.SessionAffinity = egress.Spec.SessionAffinity
-		if egress.Spec.SessionAffinityConfig != nil {
+		svc.Spec.SessionAffinity = eg.Spec.SessionAffinity
+		if eg.Spec.SessionAffinityConfig != nil {
 			sac := &corev1.SessionAffinityConfig{}
-			egress.Spec.SessionAffinityConfig.DeepCopyInto(sac)
+			eg.Spec.SessionAffinityConfig.DeepCopyInto(sac)
 			svc.Spec.SessionAffinityConfig = sac
 		}
 		return nil
@@ -165,72 +260,15 @@ func (r *EgressReconciler) reconcileService(ctx context.Context, egress *ponav1b
 	return nil
 }
 
-func (r *EgressReconciler) reconcileDeployment(ctx context.Context, egress *ponav1beta1.Egress) error {
+func (r *EgressReconciler) reconcilePDB(ctx context.Context, eg *ponav1beta1.Egress) error {
 	logger := log.FromContext(ctx)
-
-	dep := &appsv1.Deployment{}
-	dep.SetName(egress.Name)
-	dep.SetNamespace(egress.Namespace)
-
-	result, err := ctrl.CreateOrUpdate(ctx, r.Client, dep,
-		func() error {
-			if dep.DeletionTimestamp != nil {
-				return nil
-			}
-
-			if dep.Labels == nil {
-				dep.Labels = make(map[string]string)
-			}
-
-			labels := appLabels(egress.Name)
-			for k, v := range labels {
-				dep.Labels[k] = v
-			}
-
-			if dep.CreationTimestamp.IsZero() {
-				if err := ctrl.SetControllerReference(egress, dep, r.Scheme); err != nil {
-					return err
-				}
-				dep.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels}
-			}
-
-			if dep.Spec.Replicas == nil || *dep.Spec.Replicas != egress.Spec.Replicas {
-				replicas := egress.Spec.Replicas
-				dep.Spec.Replicas = &replicas
-			}
-
-			if egress.Spec.Strategy != nil {
-				egress.Spec.Strategy.DeepCopyInto(&dep.Spec.Strategy)
-			}
-			r.reconcilePodTemplate(egress, dep)
-			return nil
-		})
-	if err != nil {
-		return fmt.Errorf("failed to create or update deployment: %w", err)
-	}
-
-	if result != controllerutil.OperationResultNone {
-		logger.Info("deployment is created or updated",
-			"result", result,
-			"api_version", dep.APIVersion,
-			"kind", dep.Kind,
-			"name", dep.Name,
-			"namespace", dep.Namespace,
-		)
-	}
-
-	return nil
-}
-
-func (r *EgressReconciler) reconcilePDB(ctx context.Context, egress *ponav1beta1.Egress) error {
-	logger := log.FromContext(ctx)
-	if egress.Spec.PodDisruptionBudget == nil {
+	if eg.Spec.PodDisruptionBudget == nil {
 		return nil
 	}
 
 	pdb := &policyv1.PodDisruptionBudget{}
-	pdb.SetNamespace(egress.Namespace)
-	pdb.SetName(egress.Name)
+	pdb.SetNamespace(eg.Namespace)
+	pdb.SetName(eg.Name)
 
 	result, err := ctrl.CreateOrUpdate(ctx, r.Client, pdb, func() error {
 		if pdb.DeletionTimestamp != nil {
@@ -240,22 +278,22 @@ func (r *EgressReconciler) reconcilePDB(ctx context.Context, egress *ponav1beta1
 		if pdb.Labels == nil {
 			pdb.Labels = make(map[string]string)
 		}
-		for k, v := range appLabels(egress.Name) {
+		for k, v := range appLabels(eg.Name) {
 			pdb.Labels[k] = v
 		}
 		if pdb.CreationTimestamp.IsZero() {
-			if err := ctrl.SetControllerReference(egress, pdb, r.Scheme); err != nil {
+			if err := ctrl.SetControllerReference(eg, pdb, r.Scheme); err != nil {
 				return err
 			}
 		}
-		if egress.Spec.PodDisruptionBudget.MinAvailable != nil {
-			pdb.Spec.MinAvailable = egress.Spec.PodDisruptionBudget.MinAvailable
+		if eg.Spec.PodDisruptionBudget.MinAvailable != nil {
+			pdb.Spec.MinAvailable = eg.Spec.PodDisruptionBudget.MinAvailable
 		}
-		if egress.Spec.PodDisruptionBudget.MaxUnavailable != nil {
-			pdb.Spec.MaxUnavailable = egress.Spec.PodDisruptionBudget.MaxUnavailable
+		if eg.Spec.PodDisruptionBudget.MaxUnavailable != nil {
+			pdb.Spec.MaxUnavailable = eg.Spec.PodDisruptionBudget.MaxUnavailable
 		}
 		pdb.Spec.Selector = &metav1.LabelSelector{
-			MatchLabels: appLabels(egress.Name),
+			MatchLabels: appLabels(eg.Name),
 		}
 		return nil
 	})
@@ -276,14 +314,14 @@ func (r *EgressReconciler) reconcilePDB(ctx context.Context, egress *ponav1beta1
 	return nil
 }
 
-func (r *EgressReconciler) reconcilePodTemplate(egress *ponav1beta1.Egress, deploy *appsv1.Deployment) {
+func (r *EgressReconciler) reconcilePodTemplate(eg *ponav1beta1.Egress, deploy *appsv1.Deployment) {
 	target := &deploy.Spec.Template
 	target.Labels = make(map[string]string)
 	if target.Annotations == nil {
 		target.Annotations = make(map[string]string)
 	}
 
-	desired := egress.Spec.Template
+	desired := eg.Spec.Template
 	podSpec := &corev1.PodSpec{}
 	if desired != nil {
 		podSpec = desired.Spec.DeepCopy()
@@ -295,7 +333,7 @@ func (r *EgressReconciler) reconcilePodTemplate(egress *ponav1beta1.Egress, depl
 		}
 	}
 
-	for k, v := range appLabels(egress.Name) {
+	for k, v := range appLabels(eg.Name) {
 		target.Labels[k] = v
 	}
 
@@ -339,11 +377,11 @@ func (r *EgressReconciler) reconcilePodTemplate(egress *ponav1beta1.Egress, depl
 	egressContainer.Env = append(egressContainer.Env,
 		corev1.EnvVar{
 			Name:  EnvPodNamespace,
-			Value: egress.Namespace,
+			Value: eg.Namespace,
 		},
 		corev1.EnvVar{
 			Name:  EnvEgressName,
-			Value: egress.Name,
+			Value: eg.Name,
 		},
 		corev1.EnvVar{
 			Name: EnvAddresses,
@@ -473,6 +511,7 @@ func (r *EgressReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&ponav1beta1.Egress{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
+		Owns(&policyv1.PodDisruptionBudget{}).
 		Complete(r)
 }
 
