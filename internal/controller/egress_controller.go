@@ -13,6 +13,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
+const (
+	labelAppName      = "app.kubernetes.io/name"
+	labelAppInstance  = "app.kubernetes.io/instance"
+	labelAppComponent = "app.kubernetes.io/component"
+)
+
 // EgressReconciler reconciles a Egress object
 type EgressReconciler struct {
 	client.Client
@@ -110,4 +116,12 @@ func (r *EgressReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
 		Complete(r)
+}
+
+func appLabels(name string) map[string]string {
+	return map[string]string{
+		labelAppName:      "pona",
+		labelAppInstance:  name,
+		labelAppComponent: "egress",
+	}
 }
