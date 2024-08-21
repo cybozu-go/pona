@@ -7,7 +7,10 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -17,6 +20,21 @@ const (
 	labelAppName      = "app.kubernetes.io/name"
 	labelAppInstance  = "app.kubernetes.io/instance"
 	labelAppComponent = "app.kubernetes.io/component"
+)
+
+const (
+	egressImage             = "ghcr.io/cybozu-go/coil:2.7.2"
+	egressDefaultCpuRequest = "100m"
+	egressDefaultMemRequest = "200Mi"
+)
+
+// TODO: Change this
+const (
+	EnvNode         = "COIL_NODE_NAME"
+	EnvAddresses    = "COIL_POD_ADDRESSES"
+	EnvPodNamespace = "COIL_POD_NAMESPACE"
+	EnvPodName      = "COIL_POD_NAME"
+	EnvEgressName   = "COIL_EGRESS_NAME"
 )
 
 // EgressReconciler reconciles a Egress object
@@ -83,11 +101,13 @@ func (r *EgressReconciler) reconcileDeployment(ctx context.Context, egress ponav
 	dep := &appsv1.Deployment{}
 	dep.SetNamespace(egress.Namespace)
 	dep.SetName(egress.Name)
+	result, err := ctrl.CreateOrUpdate(ctx, r.Client, dep, func() error {
+	})
 
 	return nil
 }
 
-func (r *EgressReconciler) reconcilePodTemplate(egress *ponav1beta1.Egress, deploy *appsv1.Deployment) error {
+func (r *EgressReconciler) reconcilePodTemplate(egress *ponav1beta1.Egress, deploy *appsv1.Deployment) {
 	target := &deploy.Spec.Template
 	target.Labels = make(map[string]string)
 	if target.Annotations == nil {
@@ -106,7 +126,100 @@ func (r *EgressReconciler) reconcilePodTemplate(egress *ponav1beta1.Egress, depl
 		}
 	}
 
-	return nil
+	for k, v := range appLabels(egress.Name) {
+		target.Labels[k] = v
+	}
+
+	//TODO: add service account for Egress, pod watch/get/list...
+	podSpec.Volumes = r.addVolumes(podSpec.Volumes)
+
+	var egressContainer *corev1.Container
+	for i := range podSpec.Containers {
+		if podSpec.Containers[i].Name != "egress" {
+			continue
+		}
+		egressContainer = &(podSpec.Containers[i])
+	}
+	if egressContainer == nil {
+		podSpec.Containers = append([]corev1.Container{{}}, podSpec.Containers...)
+		egressContainer = &(podSpec.Containers[0])
+	}
+
+	for i := range podSpec.Containers {
+		if podSpec.Containers[i].Name == "egress" {
+			continue
+		}
+		egressContainer = &(podSpec.Containers[i])
+	}
+	if egressContainer == nil {
+		podSpec.Containers = append([]corev1.Container{{}}, podSpec.Containers...)
+		egressContainer = &(podSpec.Containers[0])
+	}
+	egressContainer.Name = "egress"
+
+	//TODO: Change image name and others from coil
+	if egressContainer.Image == "" {
+		egressContainer.Image = egressImage
+	}
+	if len(egressContainer.Command) == 0 {
+		egressContainer.Command = []string{"coil-egress"}
+	}
+	if len(egressContainer.Args) == 0 {
+		egressContainer.Args = []string{"--zap-stacktrace-level=panic"}
+	}
+	egressContainer.Env = append(egressContainer.Env,
+		corev1.EnvVar{
+			Name:  EnvPodNamespace,
+			Value: egress.Namespace,
+		},
+		corev1.EnvVar{
+			Name:  EnvEgressName,
+			Value: egress.Name,
+		},
+		corev1.EnvVar{
+			Name: EnvAddresses,
+			ValueFrom: &corev1.EnvVarSource{
+				FieldRef: &corev1.ObjectFieldSelector{
+					FieldPath: "status.podIPs",
+				},
+			},
+		},
+	)
+	egressContainer.VolumeMounts = r.addVolumeMounts(egressContainer.VolumeMounts)
+	egressContainer.SecurityContext = &corev1.SecurityContext{
+		Privileged:             ptr.To(true),
+		ReadOnlyRootFilesystem: ptr.To(true),
+		Capabilities:           &corev1.Capabilities{Add: []corev1.Capability{"NET_ADMIN"}},
+	}
+	if egressContainer.Resources.Requests == nil {
+		egressContainer.Resources.Requests = make(corev1.ResourceList)
+	}
+	if _, ok := egressContainer.Resources.Requests[corev1.ResourceCPU]; !ok {
+		egressContainer.Resources.Requests[corev1.ResourceCPU] = resource.MustParse(egressDefaultCpuRequest)
+	}
+	if _, ok := egressContainer.Resources.Requests[corev1.ResourceMemory]; !ok {
+		egressContainer.Resources.Requests[corev1.ResourceMemory] = resource.MustParse(egressDefaultMemRequest)
+	}
+	egressContainer.Ports = []corev1.ContainerPort{
+		{Name: "metrics", ContainerPort: 8080, Protocol: corev1.ProtocolTCP},
+		{Name: "health", ContainerPort: 8081, Protocol: corev1.ProtocolTCP},
+	}
+	egressContainer.LivenessProbe = &corev1.Probe{
+		ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{
+			Path:   "/livez",
+			Port:   intstr.FromString("livez"),
+			Scheme: corev1.URISchemeHTTP,
+		}},
+	}
+	egressContainer.ReadinessProbe = &corev1.Probe{
+		ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{
+			Path:   "/readyz",
+			Port:   intstr.FromString("health"),
+			Scheme: corev1.URISchemeHTTP,
+		}},
+	}
+
+	podSpec.DeepCopyInto(&target.Spec)
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -124,4 +237,59 @@ func appLabels(name string) map[string]string {
 		labelAppInstance:  name,
 		labelAppComponent: "egress",
 	}
+}
+
+// addVolumes adds volumes required by coil
+// TODO: change this
+func (r *EgressReconciler) addVolumes(vols []corev1.Volume) []corev1.Volume {
+	noRun := true
+	for _, vol := range vols {
+		if vol.Name == "run" {
+			noRun = false
+			break
+		}
+	}
+	if noRun {
+		vols = append(vols, corev1.Volume{
+			Name: "run",
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		})
+	}
+
+	vols = append(vols, corev1.Volume{
+		Name: "modules",
+		VolumeSource: corev1.VolumeSource{
+			HostPath: &corev1.HostPathVolumeSource{
+				Path: "/lib/modules",
+			},
+		},
+	})
+	return vols
+}
+
+func (r *EgressReconciler) addVolumeMounts(mounts []corev1.VolumeMount) []corev1.VolumeMount {
+	noRun := true
+	for _, m := range mounts {
+		if m.Name == "run" {
+			noRun = false
+			break
+		}
+	}
+	if noRun {
+		mounts = append(mounts, corev1.VolumeMount{
+			MountPath: "/run",
+			Name:      "run",
+			ReadOnly:  false,
+		})
+	}
+
+	mounts = append(mounts, corev1.VolumeMount{
+		MountPath: "/lib/modules",
+		Name:      "modules",
+		ReadOnly:  true,
+	})
+
+	return mounts
 }
