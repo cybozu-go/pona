@@ -5,11 +5,16 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	ponav1beta1 "github.com/cybozu-go/pona/api/v1beta1"
 )
@@ -17,25 +22,72 @@ import (
 var _ = Describe("Egress Controller", func() {
 	Context("When reconciling a resource", func() {
 		const resourceName = "test-resource"
+		const namespace = "default"
 
 		ctx := context.Background()
 
 		typeNamespacedName := types.NamespacedName{
 			Name:      resourceName,
-			Namespace: "default", // TODO(user):Modify as needed
+			Namespace: namespace,
 		}
 		egress := &ponav1beta1.Egress{}
 
 		BeforeEach(func() {
 			By("creating the custom resource for the Kind Egress")
+			maxUnavailable := intstr.FromInt(1)
+			const timeoutSeconds = int32(43200)
+
 			err := k8sClient.Get(ctx, typeNamespacedName, egress)
 			if err != nil && errors.IsNotFound(err) {
 				resource := &ponav1beta1.Egress{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
-						Namespace: "default",
+						Namespace: namespace,
 					},
-					// TODO(user): Specify other spec details if needed.
+					Spec: ponav1beta1.EgressSpec{
+						Destinations: []string{
+							"10.0.0.0/8",
+						},
+						Replicas: 3,
+						Strategy: &appsv1.DeploymentStrategy{
+							Type: appsv1.RollingUpdateDeploymentStrategyType,
+							RollingUpdate: &appsv1.RollingUpdateDeployment{
+								MaxUnavailable: 2,
+								MaxSurge:       0,
+							},
+						},
+						Template: &ponav1beta1.EgressPodTemplate{
+							Metadata: ponav1beta1.Metadata{
+								Annotations: map[string]string{
+									"ann1": "foo",
+								},
+								Labels: map[string]string{
+									"label1": "bar",
+								},
+							},
+							Spec: corev1.PodSpec{
+								Containers: []corev1.Container{
+									{
+										Name: "egress",
+										Resources: corev1.ResourceRequirements{
+											Limits: corev1.ResourceList{
+												"memory": resource.MustParse("400Mi"),
+											},
+										},
+									},
+								},
+							},
+						},
+						SessionAffinity: corev1.ServiceAffinityClientIP,
+						SessionAffinityConfig: &corev1.SessionAffinityConfig{
+							ClientIP: &corev1.ClientIPConfig{
+								TimeoutSeconds: ptr.To(timeoutSeconds),
+							},
+						},
+						PodDisruptionBudget: &ponav1beta1.EgressPDBSpec{
+							MaxUnavailable: &maxUnavailable,
+						},
+					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}
@@ -49,6 +101,12 @@ var _ = Describe("Egress Controller", func() {
 
 			By("Cleanup the specific resource instance Egress")
 			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+
+			By("Check if ServiceAccount is deleted")
+			By("Check if ClusterRole is not deleted")
+			By("Check if ClusterRoleBinding is not deleted")
+			By("Check if Deployment is deleted")
+			By("Check if PodDisruptionBudget is deleted")
 		})
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
@@ -61,8 +119,17 @@ var _ = Describe("Egress Controller", func() {
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
-			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
-			// Example: If you expect a certain status condition after reconciliation, verify it here.
+
+			By("Check if ServiceAccount is created")
+			var sa *corev1.ServiceAccount
+			Eventually(func() error {
+				sa = &corev1.ServiceAccount{}
+				return k8sClient.Get(ctx, client.ObjectKey{})
+			})
+			By("Check if ClusterRole is created")
+			By("Check if ClusterRoleBinding is created")
+			By("Check if Deployment is created")
+			By("Check if PodDisruptionBudget is created")
 		})
 	})
 })
