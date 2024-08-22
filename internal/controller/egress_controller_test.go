@@ -2,14 +2,17 @@ package controller
 
 import (
 	"context"
+	"errors"
+	"time"
 
 	ponav1beta1 "github.com/cybozu-go/pona/api/v1beta1"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -102,10 +105,14 @@ var _ = Describe("Egress Controller", func() {
 
 		})
 		It("should successfully reconcile the resource", func() {
+			const port = 5555
+
 			By("Reconciling the created resource")
 			controllerReconciler := &EgressReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
+
+				Port: port,
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
@@ -125,7 +132,7 @@ var _ = Describe("Egress Controller", func() {
 			Eventually(func() error {
 				cr = &rbacv1.ClusterRole{}
 				return k8sClient.Get(ctx, client.ObjectKey{Name: egressCRName, Namespace: namespace}, cr)
-			})
+			}).Should(Succeed())
 			Expect(cr.Rules).To(Equal([]rbacv1.PolicyRule{{
 				APIGroups: []string{""},
 				Resources: []string{"pods"},
@@ -137,7 +144,7 @@ var _ = Describe("Egress Controller", func() {
 			Eventually(func() error {
 				crb = &rbacv1.ClusterRoleBinding{}
 				return k8sClient.Get(ctx, client.ObjectKey{Name: egressCRBName, Namespace: namespace}, crb)
-			})
+			}).Should(Succeed())
 			Expect(crb.Subjects).To(Equal([]rbacv1.Subject{{
 				Kind:      "ServiceAccount",
 				Name:      egressServiceAccountName,
@@ -149,7 +156,7 @@ var _ = Describe("Egress Controller", func() {
 			Eventually(func() error {
 				dep = &appsv1.Deployment{}
 				return k8sClient.Get(ctx, client.ObjectKey{Name: desiredEgress.Name, Namespace: namespace}, dep)
-			})
+			}).Should(Succeed())
 			Expect(dep.OwnerReferences).To(HaveLen(1))
 			Expect(dep.Spec.Replicas).NotTo(BeNil())
 			Expect(*dep.Spec.Replicas).To(Equal(int32(1)))
@@ -209,13 +216,85 @@ var _ = Describe("Egress Controller", func() {
 			Eventually(func() error {
 				svc = &corev1.Service{}
 				return k8sClient.Get(ctx, client.ObjectKey(namespacedName), svc)
-			})
-			By("Check if PodDisruptionBudget is created")
+			}).Should(Succeed())
+			Expect(svc.OwnerReferences).To(HaveLen(1))
 
+			Expect(svc.Spec.Type).To(Equal(corev1.ServiceTypeClusterIP))
+			Expect(svc.Spec.Selector).To(HaveKeyWithValue(labelAppName, "pona"))
+			Expect(svc.Spec.Selector).To(HaveKeyWithValue(labelAppComponent, desiredEgress.Name))
+			Expect(svc.Spec.Selector).To(HaveKeyWithValue(labelAppInstance, "egress"))
+
+			Expect(svc.Spec.Ports).To(Equal(
+				[]corev1.ServicePort{{
+					Port:       port,
+					TargetPort: intstr.FromInt(int(port)),
+					Protocol:   corev1.ProtocolUDP,
+				}},
+			))
+			Expect(svc.Spec.SessionAffinity).To(Equal(desiredEgress.Spec.SessionAffinity))
+			Expect(svc.Spec.SessionAffinityConfig).To(Equal(desiredEgress.Spec.SessionAffinityConfig))
+
+			By("Check if PodDisruptionBudget is created")
+			var pdb *policyv1.PodDisruptionBudget
+			Eventually(func() error {
+				pdb = &policyv1.PodDisruptionBudget{}
+				return k8sClient.Get(ctx, client.ObjectKey(namespacedName), pdb)
+			}).Should(Succeed())
+			Expect(pdb.OwnerReferences).To(HaveLen(1))
+
+			Expect(pdb.Labels).To(HaveKeyWithValue(labelAppName, "pona"))
+			Expect(pdb.Labels).To(HaveKeyWithValue(labelAppComponent, desiredEgress.Name))
+			Expect(pdb.Labels).To(HaveKeyWithValue(labelAppInstance, "egress"))
+
+			Expect(pdb.Spec.MaxUnavailable).To(Equal(desiredEgress.Spec.PodDisruptionBudget.MaxUnavailable))
+
+			Expect(pdb.Spec.Selector).To(HaveKeyWithValue(labelAppName, "pona"))
+			Expect(pdb.Spec.Selector).To(HaveKeyWithValue(labelAppComponent, desiredEgress.Name))
+			Expect(pdb.Spec.Selector).To(HaveKeyWithValue(labelAppInstance, "egress"))
+
+			By("Delete egress")
+			Expect(k8sClient.Delete(ctx, desiredEgress)).NotTo(HaveOccurred())
+			Expect(func() error {
+				_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+					NamespacedName: namespacedName,
+				})
+				return err
+			}).NotTo(HaveOccurred())
+
+			const timeout = 5 * time.Second
 			By("Check if ServiceAccount is not deleted")
+			Consistently(func() error {
+				sa := &corev1.ServiceAccount{}
+				return k8sClient.Get(ctx, client.ObjectKey{Name: egressServiceAccountName, Namespace: namespace}, sa)
+			}).WithTimeout(timeout).Should(Succeed())
+
 			By("Check if ClusterRole is not deleted")
+			Consistently(func() error {
+				cr := &rbacv1.ClusterRole{}
+				return k8sClient.Get(ctx, client.ObjectKey{Name: egressCRName, Namespace: namespace}, cr)
+			}).WithTimeout(timeout).Should(Succeed())
+
 			By("Check if ClusterRoleBinding is not deleted")
+			Consistently(func() error {
+				crb := &rbacv1.ClusterRoleBinding{}
+				return k8sClient.Get(ctx, client.ObjectKey{Name: egressCRBName, Namespace: namespace}, crb)
+			}).WithTimeout(timeout).Should(Succeed())
+
 			By("Check if Deployment is deleted")
+			Eventually(func() error {
+				dep := &appsv1.Deployment{}
+				err := k8sClient.Get(ctx, client.ObjectKey(namespacedName), dep)
+				if apierrors.IsNotFound(err) {
+					return nil
+				}
+
+				if err != nil {
+					return err
+				}
+
+				return errors.New("deployment has existed yet")
+			}).Should(Succeed())
+
 			By("Check if Service is deleted")
 			By("Check if PodDisruptionBudget is deleted")
 		})
