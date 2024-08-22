@@ -3,10 +3,12 @@ package controller
 import (
 	"context"
 
+	ponav1beta1 "github.com/cybozu-go/pona/api/v1beta1"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -15,8 +17,6 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-
-	ponav1beta1 "github.com/cybozu-go/pona/api/v1beta1"
 )
 
 var _ = Describe("Egress Controller", func() {
@@ -26,7 +26,7 @@ var _ = Describe("Egress Controller", func() {
 
 		ctx := context.Background()
 
-		typeNamespacedName := types.NamespacedName{
+		namespacedName := types.NamespacedName{
 			Name:      resourceName,
 			Namespace: namespace,
 		}
@@ -34,11 +34,8 @@ var _ = Describe("Egress Controller", func() {
 
 		BeforeEach(func() {
 			By("creating the custom resource for the Kind Egress")
-			maxUnavailable := intstr.FromInt(1)
-			const timeoutSeconds = int32(43200)
-
-			err := k8sClient.Get(ctx, typeNamespacedName, egress)
-			if err != nil && errors.IsNotFound(err) {
+			err := k8sClient.Get(ctx, namespacedName, egress)
+			if errors.IsNotFound(err) {
 				resource := &ponav1beta1.Egress{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
@@ -52,8 +49,8 @@ var _ = Describe("Egress Controller", func() {
 						Strategy: &appsv1.DeploymentStrategy{
 							Type: appsv1.RollingUpdateDeploymentStrategyType,
 							RollingUpdate: &appsv1.RollingUpdateDeployment{
-								MaxUnavailable: 2,
-								MaxSurge:       0,
+								MaxUnavailable: ptr.To(intstr.FromInt(2)),
+								MaxSurge:       ptr.To(intstr.FromInt(0)),
 							},
 						},
 						Template: &ponav1beta1.EgressPodTemplate{
@@ -81,32 +78,27 @@ var _ = Describe("Egress Controller", func() {
 						SessionAffinity: corev1.ServiceAffinityClientIP,
 						SessionAffinityConfig: &corev1.SessionAffinityConfig{
 							ClientIP: &corev1.ClientIPConfig{
-								TimeoutSeconds: ptr.To(timeoutSeconds),
+								TimeoutSeconds: ptr.To(int32(43200)),
 							},
 						},
 						PodDisruptionBudget: &ponav1beta1.EgressPDBSpec{
-							MaxUnavailable: &maxUnavailable,
+							MaxUnavailable: ptr.To(intstr.FromInt(1)),
 						},
 					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}
+			Expect(err).NotTo(HaveOccurred())
 		})
 
 		AfterEach(func() {
-			// TODO(user): Cleanup logic after each test, like removing the resource instance.
 			resource := &ponav1beta1.Egress{}
-			err := k8sClient.Get(ctx, typeNamespacedName, resource)
+			err := k8sClient.Get(ctx, namespacedName, resource)
 			Expect(err).NotTo(HaveOccurred())
 
 			By("Cleanup the specific resource instance Egress")
 			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
 
-			By("Check if ServiceAccount is deleted")
-			By("Check if ClusterRole is not deleted")
-			By("Check if ClusterRoleBinding is not deleted")
-			By("Check if Deployment is deleted")
-			By("Check if PodDisruptionBudget is deleted")
 		})
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
@@ -116,7 +108,7 @@ var _ = Describe("Egress Controller", func() {
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
+				NamespacedName: namespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
 
@@ -124,12 +116,42 @@ var _ = Describe("Egress Controller", func() {
 			var sa *corev1.ServiceAccount
 			Eventually(func() error {
 				sa = &corev1.ServiceAccount{}
-				return k8sClient.Get(ctx, client.ObjectKey{})
-			})
+				return k8sClient.Get(ctx, client.ObjectKey{Name: egressServiceAccountName, Namespace: namespace}, sa)
+			}).Should(Succeed())
+
 			By("Check if ClusterRole is created")
+			var cr *rbacv1.ClusterRole
+			Eventually(func() error {
+				cr = &rbacv1.ClusterRole{}
+				return k8sClient.Get(ctx, client.ObjectKey{Name: egressCRName, Namespace: namespace}, cr)
+			})
+			Expect(cr.Rules).To(Equal([]rbacv1.PolicyRule{{
+				APIGroups: []string{""},
+				Resources: []string{"pods"},
+				Verbs:     []string{"get", "list", "watch"},
+			}}))
+
 			By("Check if ClusterRoleBinding is created")
+			var crb *rbacv1.ClusterRoleBinding
+			Eventually(func() error {
+				cr = &rbacv1.ClusterRole{}
+				return k8sClient.Get(ctx, client.ObjectKey{Name: egressCRName, Namespace: namespace}, cr)
+			})
+			Expect(crb.Subjects).To(Equal([]rbacv1.Subject{{
+				Kind:      "ServiceAccount",
+				Name:      egressServiceAccountName,
+				Namespace: namespace,
+			}}))
+
 			By("Check if Deployment is created")
 			By("Check if PodDisruptionBudget is created")
+
+			By("Check if ServiceAccount is not deleted")
+			By("Check if ClusterRole is not deleted")
+			By("Check if ClusterRoleBinding is not deleted")
+			By("Check if Deployment is deleted")
+			By("Check if Service is deleted")
+			By("Check if PodDisruptionBudget is deleted")
 		})
 	})
 })
