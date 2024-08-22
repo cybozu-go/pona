@@ -60,10 +60,11 @@ type EgressReconciler struct {
 // +kubebuilder:rbac:groups=pona.cybozu.com,resources=egresses/finalizers,verbs=update
 
 //+kubebuilder:rbac:groups=core,resources=serviceaccounts,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=policy,resources=clusterroles,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=policy,resources=clusterrolebindings,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=policy,resources=poddisruptionbudget,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterrolebindings,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch
 //+kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=core,resources=events,verbs=create;update;patch
 
@@ -99,7 +100,7 @@ func (r *EgressReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 
 	defer func() {
 		if err := r.updateStatus(ctx, &eg); err != nil {
-			logger.Error(err, "unable to update status",
+			logger.Error(err, "/",
 				"api_version", eg.APIVersion,
 				"kind", eg.Kind,
 				"name", eg.Name,
@@ -135,7 +136,7 @@ func (r *EgressReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 }
 
 func (r *EgressReconciler) reconcileServiceAccount(ctx context.Context, eg *ponav1beta1.Egress) error {
-	if eg != nil {
+	if eg == nil {
 		return errors.New("eg is nil")
 	}
 	logger := log.FromContext(ctx)
@@ -254,6 +255,7 @@ func (r *EgressReconciler) reconcileDeployment(ctx context.Context, eg *ponav1be
 	dep.SetName(eg.Name)
 	dep.SetNamespace(eg.Namespace)
 
+	//TODO: server side apply
 	result, err := ctrl.CreateOrUpdate(ctx, r.Client, dep,
 		func() error {
 			if dep.DeletionTimestamp != nil {

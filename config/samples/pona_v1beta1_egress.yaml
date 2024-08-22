@@ -1,9 +1,33 @@
 apiVersion: pona.cybozu.com/v1beta1
 kind: Egress
 metadata:
-  labels:
-    app.kubernetes.io/name: pona
-    app.kubernetes.io/managed-by: kustomize
-  name: egress-sample
+  namespace: egress
+  name: egress
 spec:
-  # TODO(user): Add fields here
+  destinations:
+  - 172.20.0.0/16
+  - fd04::/64
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 2
+      maxSurge: 0
+  template:
+    metadata:
+      annotations:
+        ann1: foo
+      labels:
+        label1: bar
+    spec:
+      containers:
+      - name: egress
+        resources:
+          limits:
+            memory: 400Mi
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 43200
+  podDisruptionBudget:
+    maxUnavailable: 1
