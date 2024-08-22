@@ -60,9 +60,18 @@ fmt: ## Run go fmt against code.
 vet: ## Run go vet against code.
 	go vet ./...
 
+.PHONY: mod
+mod: ## Run go mod tidy against code.
+	go mod tidy
+
 .PHONY: test
-test: manifests generate fmt vet envtest ## Run tests.
+test: manifests generate fmt vet mod envtest check-generate ## Run tests.
+	git diff --exit-code --name-only
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
+
+.PHONY: check-generate
+check-generate: manifests generate fmt mod 
+	git diff --exit-code --name-only
 
 # Utilize Kind or modify the e2e tests to load the image locally, enabling compatibility with other vendors.
 .PHONY: test-e2e  # Run the e2e tests against a Kind k8s instance that is spun up.
@@ -80,11 +89,11 @@ lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 ##@ Build
 
 .PHONY: build
-build: manifests generate fmt vet ## Build manager binary.
+build: manifests generate fmt vet mod ## Build manager binary.
 	go build -o bin/egress-controller cmd/egress-controller/main.go
 
 .PHONY: run
-run: manifests generate fmt vet ## Run a controller from your host.
+run: manifests generate fmt vet mod ## Run a controller from your host.
 	go run ./cmd/egress-controller/main.go
 
 # If you wish to build the manager image targeting other platforms you can use the --platform flag.
