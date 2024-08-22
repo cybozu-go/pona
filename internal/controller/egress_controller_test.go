@@ -2,7 +2,7 @@ package controller
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"time"
 
 	ponav1beta1 "github.com/cybozu-go/pona/api/v1beta1"
@@ -89,10 +89,11 @@ var _ = Describe("Egress Controller", func() {
 		BeforeEach(func() {
 			By("creating the custom resource for the Kind Egress")
 			err := k8sClient.Get(ctx, namespacedName, egress)
-			if errors.IsNotFound(err) {
+			if apierrors.IsNotFound(err) {
 				Expect(k8sClient.Create(ctx, desiredEgress)).To(Succeed())
+			} else {
+				Expect(err).NotTo(HaveOccurred())
 			}
-			Expect(err).NotTo(HaveOccurred())
 		})
 
 		AfterEach(func() {
@@ -159,11 +160,11 @@ var _ = Describe("Egress Controller", func() {
 			}).Should(Succeed())
 			Expect(dep.OwnerReferences).To(HaveLen(1))
 			Expect(dep.Spec.Replicas).NotTo(BeNil())
-			Expect(*dep.Spec.Replicas).To(Equal(int32(1)))
+			Expect(*dep.Spec.Replicas).To(Equal(desiredEgress.Spec.Replicas))
 
 			Expect(dep.Spec.Template.Labels).To(HaveKeyWithValue(labelAppName, "pona"))
-			Expect(dep.Spec.Template.Labels).To(HaveKeyWithValue(labelAppComponent, desiredEgress.Name))
-			Expect(dep.Spec.Template.Labels).To(HaveKeyWithValue(labelAppInstance, "egress"))
+			Expect(dep.Spec.Template.Labels).To(HaveKeyWithValue(labelAppComponent, "egress"))
+			Expect(dep.Spec.Template.Labels).To(HaveKeyWithValue(labelAppInstance, desiredEgress.Name))
 			Expect(dep.Spec.Template.Spec.ServiceAccountName).To(Equal(egressServiceAccountName))
 			Expect(dep.Spec.Template.Spec.Volumes).To(HaveLen(2))
 
@@ -191,24 +192,20 @@ var _ = Describe("Egress Controller", func() {
 				},
 			))
 			Expect(egressContainer.LivenessProbe).NotTo(BeNil())
-			Expect(*egressContainer.LivenessProbe).To(Equal(
-				corev1.Probe{
-					ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{
-						Path:   "/livez",
-						Port:   intstr.FromString("livez"),
-						Scheme: corev1.URISchemeHTTP,
-					}},
-				},
+			Expect(egressContainer.LivenessProbe.ProbeHandler).To(Equal(
+				corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{
+					Path:   "/livez",
+					Port:   intstr.FromString("livez"),
+					Scheme: corev1.URISchemeHTTP,
+				}},
 			))
 			Expect(egressContainer.ReadinessProbe).NotTo(BeNil())
-			Expect(egressContainer.ReadinessProbe).To(Equal(
-				corev1.Probe{
-					ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{
-						Path:   "/readyz",
-						Port:   intstr.FromString("health"),
-						Scheme: corev1.URISchemeHTTP,
-					}},
-				},
+			Expect(egressContainer.ReadinessProbe.ProbeHandler).To(Equal(
+				corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{
+					Path:   "/readyz",
+					Port:   intstr.FromString("health"),
+					Scheme: corev1.URISchemeHTTP,
+				}},
 			))
 
 			By("Check if Service is created")
@@ -221,8 +218,8 @@ var _ = Describe("Egress Controller", func() {
 
 			Expect(svc.Spec.Type).To(Equal(corev1.ServiceTypeClusterIP))
 			Expect(svc.Spec.Selector).To(HaveKeyWithValue(labelAppName, "pona"))
-			Expect(svc.Spec.Selector).To(HaveKeyWithValue(labelAppComponent, desiredEgress.Name))
-			Expect(svc.Spec.Selector).To(HaveKeyWithValue(labelAppInstance, "egress"))
+			Expect(svc.Spec.Selector).To(HaveKeyWithValue(labelAppComponent, "egress"))
+			Expect(svc.Spec.Selector).To(HaveKeyWithValue(labelAppInstance, desiredEgress.Name))
 
 			Expect(svc.Spec.Ports).To(Equal(
 				[]corev1.ServicePort{{
@@ -243,14 +240,14 @@ var _ = Describe("Egress Controller", func() {
 			Expect(pdb.OwnerReferences).To(HaveLen(1))
 
 			Expect(pdb.Labels).To(HaveKeyWithValue(labelAppName, "pona"))
-			Expect(pdb.Labels).To(HaveKeyWithValue(labelAppComponent, desiredEgress.Name))
-			Expect(pdb.Labels).To(HaveKeyWithValue(labelAppInstance, "egress"))
+			Expect(pdb.Labels).To(HaveKeyWithValue(labelAppComponent, "egress"))
+			Expect(pdb.Labels).To(HaveKeyWithValue(labelAppInstance, desiredEgress.Name))
 
 			Expect(pdb.Spec.MaxUnavailable).To(Equal(desiredEgress.Spec.PodDisruptionBudget.MaxUnavailable))
 
 			Expect(pdb.Spec.Selector).To(HaveKeyWithValue(labelAppName, "pona"))
-			Expect(pdb.Spec.Selector).To(HaveKeyWithValue(labelAppComponent, desiredEgress.Name))
-			Expect(pdb.Spec.Selector).To(HaveKeyWithValue(labelAppInstance, "egress"))
+			Expect(pdb.Spec.Selector).To(HaveKeyWithValue(labelAppComponent, "egress"))
+			Expect(pdb.Spec.Selector).To(HaveKeyWithValue(labelAppInstance, desiredEgress.Name))
 
 			By("Delete egress")
 			Expect(k8sClient.Delete(ctx, desiredEgress)).NotTo(HaveOccurred())
@@ -284,19 +281,34 @@ var _ = Describe("Egress Controller", func() {
 			Eventually(func() error {
 				dep := &appsv1.Deployment{}
 				err := k8sClient.Get(ctx, client.ObjectKey(namespacedName), dep)
-				if apierrors.IsNotFound(err) {
-					return nil
-				}
-
-				if err != nil {
-					return err
-				}
-
-				return errors.New("deployment has existed yet")
+				return isNotfound(err, dep)
 			}).Should(Succeed())
 
 			By("Check if Service is deleted")
+			Eventually(func() error {
+				svc := &corev1.Service{}
+				err := k8sClient.Get(ctx, client.ObjectKey(namespacedName), svc)
+				return isNotfound(err, svc)
+			}).Should(Succeed())
+
 			By("Check if PodDisruptionBudget is deleted")
+			Eventually(func() error {
+				pdb := &policyv1.PodDisruptionBudget{}
+				err := k8sClient.Get(ctx, client.ObjectKey(namespacedName), pdb)
+				return isNotfound(err, pdb)
+			}).Should(Succeed())
 		})
 	})
 })
+
+func isNotfound(err error, resource client.Object) error {
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+
+	if err != nil {
+		return err
+	}
+
+	return fmt.Errorf("%s still exists", resource.GetName())
+}
