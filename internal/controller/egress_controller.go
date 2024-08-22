@@ -35,6 +35,7 @@ const (
 	egressDefaultMemRequest  = "200Mi"
 	egressServiceAccountName = "egress"
 	egressCRBName            = "egress"
+	egressCRName             = "egress"
 )
 
 // TODO: Change this
@@ -58,6 +59,10 @@ type EgressReconciler struct {
 // +kubebuilder:rbac:groups=pona.cybozu.com,resources=egresses/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=pona.cybozu.com,resources=egresses/finalizers,verbs=update
 
+//+kubebuilder:rbac:groups=core,resources=serviceaccounts,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=policy,resources=clusterroles,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=policy,resources=clusterrolebindings,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=policy,resources=poddisruptionbudget,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=core,resources=events,verbs=create;update;patch
@@ -106,6 +111,14 @@ func (r *EgressReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, err
 	}
 
+	if err := r.reconcileCR(ctx); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	if err := r.reconcileCRB(ctx); err != nil {
+		return ctrl.Result{}, err
+	}
+
 	if err := r.reconcileDeployment(ctx, &eg); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -147,13 +160,47 @@ func (r *EgressReconciler) reconcileServiceAccount(ctx context.Context, eg *pona
 	return nil
 }
 
-func (r *EgressReconciler) reconcileCRB(ctx context.Context) error {
-	crb := &rbacv1.ClusterRoleBinding{}
+func (r *EgressReconciler) reconcileCR(ctx context.Context) error {
+	logger := log.FromContext(ctx)
 
-	if err := r.Get(ctx, client.ObjectKey{Name: egressCRBName}); err != nil {
+	cr := rbacv1.ClusterRole{}
+	name := egressCRName
+
+	if err := r.Get(ctx, client.ObjectKey{Name: name}, &cr); err != nil {
+		if apierrors.IsNotFound(err) {
+			cr.SetName(name)
+			logger.Info("creating service account for egress",
+				"name", name,
+			)
+			cr.Rules = []rbacv1.PolicyRule{
+				{
+					APIGroups: []string{""},
+					Resources: []string{"pods"},
+					Verbs:     []string{"get", "list", "watch"},
+				},
+			}
+			return r.Create(ctx, &cr)
+		}
+		return err
+	}
+
+	return nil
+}
+
+func (r *EgressReconciler) reconcileCRB(ctx context.Context) error {
+	crb := rbacv1.ClusterRoleBinding{}
+
+	if err := r.Get(ctx, client.ObjectKey{Name: egressCRBName}, &crb); err != nil {
 		if apierrors.IsNotFound(err) {
 			crb.SetName(egressCRBName)
-			if err := r.Create(ctx, crb); err != nil {
+
+			crb.RoleRef = rbacv1.RoleRef{
+				APIGroup: "rbac.authorization.k8s.io",
+				Kind:     "ClusterRole",
+				Name:     egressCRName,
+			}
+
+			if err := r.Create(ctx, &crb); err != nil {
 				return fmt.Errorf("failed to create CRB resource: %w", err)
 			}
 		} else {
@@ -175,6 +222,16 @@ func (r *EgressReconciler) reconcileCRB(ctx context.Context) error {
 			Namespace: n,
 		}
 	}
+
+	newCrb := crb.DeepCopy()
+	newCrb.Subjects = subjects
+	patch := client.MergeFrom(&crb)
+
+	if err := r.Patch(ctx, newCrb, patch); err != nil {
+		return fmt.Errorf("failed to patch crb: %w", err)
+	}
+
+	return nil
 }
 
 func getNamespaces(egresses *ponav1beta1.EgressList) []string {
@@ -555,6 +612,9 @@ func (r *EgressReconciler) addVolumeMounts(mounts []corev1.VolumeMount) []corev1
 func (r *EgressReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&ponav1beta1.Egress{}).
+		Owns(&corev1.ServiceAccount{}).
+		Owns(&rbacv1.ClusterRole{}).
+		Owns(&rbacv1.ClusterRoleBinding{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
 		Owns(&policyv1.PodDisruptionBudget{}).
