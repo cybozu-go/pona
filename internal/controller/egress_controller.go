@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 
 	ponav1beta1 "github.com/cybozu-go/pona/api/v1beta1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -19,7 +21,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-	rbacv1 "k8s.io/api/rbac/v1"
 )
 
 const (
@@ -33,7 +34,7 @@ const (
 	egressDefaultCpuRequest  = "100m"
 	egressDefaultMemRequest  = "200Mi"
 	egressServiceAccountName = "egress"
-	egressCRBName = "egress"
+	egressCRBName            = "egress"
 )
 
 // TODO: Change this
@@ -148,14 +149,45 @@ func (r *EgressReconciler) reconcileServiceAccount(ctx context.Context, eg *pona
 
 func (r *EgressReconciler) reconcileCRB(ctx context.Context) error {
 	crb := &rbacv1.ClusterRoleBinding{}
-	if err := r.Get(ctx, client.ObjectKey{Name: egressCRBName}, crb); err != nil {
-		if apierrors.IsNotFound(err){
-			// TODO create CRB
-			return nil
+
+	if err := r.Get(ctx, client.ObjectKey{Name: egressCRBName}); err != nil {
+		if apierrors.IsNotFound(err) {
+			crb.SetName(egressCRBName)
+			if err := r.Create(ctx, crb); err != nil {
+				return fmt.Errorf("failed to create CRB resource: %w", err)
+			}
+		} else {
+			return fmt.Errorf("unable to get CRB: %w", err)
 		}
-		return err
 	}
 
+	egresses := &ponav1beta1.EgressList{}
+	if err := r.List(ctx, egresses); err != nil {
+		return fmt.Errorf("unable to list Egress: %w", err)
+	}
+	namespaces := getNamespaces(egresses)
+
+	subjects := make([]rbacv1.Subject, len(namespaces))
+	for i, n := range namespaces {
+		subjects[i] = rbacv1.Subject{
+			Kind:      "ServiceAccount",
+			Name:      egressServiceAccountName,
+			Namespace: n,
+		}
+	}
+}
+
+func getNamespaces(egresses *ponav1beta1.EgressList) []string {
+	nsMap := make(map[string]struct{})
+	for _, eg := range egresses.Items {
+		nsMap[eg.Namespace] = struct{}{}
+	}
+	namespaces := make([]string, 0, len(nsMap))
+	for k := range nsMap {
+		namespaces = append(namespaces, k)
+	}
+	sort.Strings(namespaces)
+	return namespaces
 }
 
 func (r *EgressReconciler) reconcileDeployment(ctx context.Context, eg *ponav1beta1.Egress) error {
