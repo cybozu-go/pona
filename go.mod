@@ -1,6 +1,6 @@
 module github.com/cybozu-go/pona
 
-go 1.23.0
+go 1.22.6
 
 require (
 	github.com/onsi/ginkgo/v2 v2.17.1
