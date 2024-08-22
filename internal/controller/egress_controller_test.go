@@ -32,61 +32,62 @@ var _ = Describe("Egress Controller", func() {
 		}
 		egress := &ponav1beta1.Egress{}
 
-		BeforeEach(func() {
-			By("creating the custom resource for the Kind Egress")
-			err := k8sClient.Get(ctx, namespacedName, egress)
-			if errors.IsNotFound(err) {
-				resource := &ponav1beta1.Egress{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      resourceName,
-						Namespace: namespace,
+		desiredEgress := &ponav1beta1.Egress{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      resourceName,
+				Namespace: namespace,
+			},
+			Spec: ponav1beta1.EgressSpec{
+				Destinations: []string{
+					"10.0.0.0/8",
+				},
+				Replicas: 3,
+				Strategy: &appsv1.DeploymentStrategy{
+					Type: appsv1.RollingUpdateDeploymentStrategyType,
+					RollingUpdate: &appsv1.RollingUpdateDeployment{
+						MaxUnavailable: ptr.To(intstr.FromInt(2)),
+						MaxSurge:       ptr.To(intstr.FromInt(0)),
 					},
-					Spec: ponav1beta1.EgressSpec{
-						Destinations: []string{
-							"10.0.0.0/8",
+				},
+				Template: &ponav1beta1.EgressPodTemplate{
+					Metadata: ponav1beta1.Metadata{
+						Annotations: map[string]string{
+							"ann1": "foo",
 						},
-						Replicas: 3,
-						Strategy: &appsv1.DeploymentStrategy{
-							Type: appsv1.RollingUpdateDeploymentStrategyType,
-							RollingUpdate: &appsv1.RollingUpdateDeployment{
-								MaxUnavailable: ptr.To(intstr.FromInt(2)),
-								MaxSurge:       ptr.To(intstr.FromInt(0)),
-							},
+						Labels: map[string]string{
+							"label1": "bar",
 						},
-						Template: &ponav1beta1.EgressPodTemplate{
-							Metadata: ponav1beta1.Metadata{
-								Annotations: map[string]string{
-									"ann1": "foo",
-								},
-								Labels: map[string]string{
-									"label1": "bar",
-								},
-							},
-							Spec: corev1.PodSpec{
-								Containers: []corev1.Container{
-									{
-										Name: "egress",
-										Resources: corev1.ResourceRequirements{
-											Limits: corev1.ResourceList{
-												"memory": resource.MustParse("400Mi"),
-											},
-										},
+					},
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{
+							{
+								Name: "egress",
+								Resources: corev1.ResourceRequirements{
+									Limits: corev1.ResourceList{
+										"memory": resource.MustParse("400Mi"),
 									},
 								},
 							},
 						},
-						SessionAffinity: corev1.ServiceAffinityClientIP,
-						SessionAffinityConfig: &corev1.SessionAffinityConfig{
-							ClientIP: &corev1.ClientIPConfig{
-								TimeoutSeconds: ptr.To(int32(43200)),
-							},
-						},
-						PodDisruptionBudget: &ponav1beta1.EgressPDBSpec{
-							MaxUnavailable: ptr.To(intstr.FromInt(1)),
-						},
 					},
-				}
-				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+				},
+				SessionAffinity: corev1.ServiceAffinityClientIP,
+				SessionAffinityConfig: &corev1.SessionAffinityConfig{
+					ClientIP: &corev1.ClientIPConfig{
+						TimeoutSeconds: ptr.To(int32(43200)),
+					},
+				},
+				PodDisruptionBudget: &ponav1beta1.EgressPDBSpec{
+					MaxUnavailable: ptr.To(intstr.FromInt(1)),
+				},
+			},
+		}
+
+		BeforeEach(func() {
+			By("creating the custom resource for the Kind Egress")
+			err := k8sClient.Get(ctx, namespacedName, egress)
+			if errors.IsNotFound(err) {
+				Expect(k8sClient.Create(ctx, desiredEgress)).To(Succeed())
 			}
 			Expect(err).NotTo(HaveOccurred())
 		})
@@ -134,8 +135,8 @@ var _ = Describe("Egress Controller", func() {
 			By("Check if ClusterRoleBinding is created")
 			var crb *rbacv1.ClusterRoleBinding
 			Eventually(func() error {
-				cr = &rbacv1.ClusterRole{}
-				return k8sClient.Get(ctx, client.ObjectKey{Name: egressCRName, Namespace: namespace}, cr)
+				crb = &rbacv1.ClusterRoleBinding{}
+				return k8sClient.Get(ctx, client.ObjectKey{Name: egressCRBName, Namespace: namespace}, crb)
 			})
 			Expect(crb.Subjects).To(Equal([]rbacv1.Subject{{
 				Kind:      "ServiceAccount",
@@ -144,6 +145,71 @@ var _ = Describe("Egress Controller", func() {
 			}}))
 
 			By("Check if Deployment is created")
+			var dep *appsv1.Deployment
+			Eventually(func() error {
+				dep = &appsv1.Deployment{}
+				return k8sClient.Get(ctx, client.ObjectKey{Name: desiredEgress.Name, Namespace: namespace}, dep)
+			})
+			Expect(dep.OwnerReferences).To(HaveLen(1))
+			Expect(dep.Spec.Replicas).NotTo(BeNil())
+			Expect(*dep.Spec.Replicas).To(Equal(int32(1)))
+
+			Expect(dep.Spec.Template.Labels).To(HaveKeyWithValue(labelAppName, "pona"))
+			Expect(dep.Spec.Template.Labels).To(HaveKeyWithValue(labelAppComponent, desiredEgress.Name))
+			Expect(dep.Spec.Template.Labels).To(HaveKeyWithValue(labelAppInstance, "egress"))
+			Expect(dep.Spec.Template.Spec.ServiceAccountName).To(Equal(egressServiceAccountName))
+			Expect(dep.Spec.Template.Spec.Volumes).To(HaveLen(2))
+
+			Expect(dep.Spec.Template.Spec.Containers).To(HaveLen(1))
+			egressContainer := dep.Spec.Template.Spec.Containers[0]
+
+			Expect(egressContainer).NotTo(BeNil())
+			Expect(egressContainer.Image).To(Equal(egressImage))
+			Expect(egressContainer.Command).To(Equal([]string{"coil-egress"})) //TODO: Change this when use another container image
+			Expect(egressContainer.Env).To(HaveLen(3))
+			Expect(egressContainer.VolumeMounts).To(HaveLen(2))
+			Expect(egressContainer.SecurityContext).NotTo(BeNil())
+			Expect(egressContainer.SecurityContext.ReadOnlyRootFilesystem).NotTo(BeNil())
+			Expect(*egressContainer.SecurityContext.ReadOnlyRootFilesystem).To(BeTrue())
+			Expect(egressContainer.SecurityContext.Privileged).NotTo(BeNil())
+			Expect(*egressContainer.SecurityContext.Privileged).To(BeTrue())
+			Expect(egressContainer.SecurityContext.Capabilities).NotTo(BeNil())
+			Expect(*egressContainer.SecurityContext.Capabilities).To(Equal(corev1.Capabilities{Add: []corev1.Capability{"NET_ADMIN"}}))
+			Expect(egressContainer.Resources.Requests).To(HaveKeyWithValue(corev1.ResourceCPU, resource.MustParse(egressDefaultCpuRequest)))
+			Expect(egressContainer.Resources.Requests).To(HaveKeyWithValue(corev1.ResourceMemory, resource.MustParse(egressDefaultMemRequest)))
+			Expect(egressContainer.Ports).To(Equal(
+				[]corev1.ContainerPort{
+					{Name: "metrics", ContainerPort: 8080, Protocol: corev1.ProtocolTCP},
+					{Name: "health", ContainerPort: 8081, Protocol: corev1.ProtocolTCP},
+				},
+			))
+			Expect(egressContainer.LivenessProbe).NotTo(BeNil())
+			Expect(*egressContainer.LivenessProbe).To(Equal(
+				corev1.Probe{
+					ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{
+						Path:   "/livez",
+						Port:   intstr.FromString("livez"),
+						Scheme: corev1.URISchemeHTTP,
+					}},
+				},
+			))
+			Expect(egressContainer.ReadinessProbe).NotTo(BeNil())
+			Expect(egressContainer.ReadinessProbe).To(Equal(
+				corev1.Probe{
+					ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{
+						Path:   "/readyz",
+						Port:   intstr.FromString("health"),
+						Scheme: corev1.URISchemeHTTP,
+					}},
+				},
+			))
+
+			By("Check if Service is created")
+			var svc *corev1.Service
+			Eventually(func() error {
+				svc = &corev1.Service{}
+				return k8sClient.Get(ctx, client.ObjectKey(namespacedName), svc)
+			})
 			By("Check if PodDisruptionBudget is created")
 
 			By("Check if ServiceAccount is not deleted")
