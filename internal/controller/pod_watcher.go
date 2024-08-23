@@ -2,10 +2,14 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 
+	"github.com/cybozu-go/pona/internal/tunnel"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -28,7 +32,14 @@ type PodReconciler struct {
 	EgressNamespace string
 
 	linkMutex sync.Mutex
+
+	podToPodIPs map[types.NamespacedName][]netip.Addr
+	podIPToPod  map[netip.Addr]Set[types.NamespacedName]
+
+	tun tunnel.Tunnel
 }
+
+type Set[T comparable] map[T]struct{}
 
 // +kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch
 
@@ -54,6 +65,10 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, fmt.Errorf("failed to get Pod: %w", err)
+	}
+
+	if !r.shouldHandle(pod) {
+		return ctrl.Result{}, nil
 	}
 
 	// Pod is terminated or terminating
@@ -91,7 +106,61 @@ func (r *PodReconciler) handlePodRunning(ctx context.Context, pod *corev1.Pod) e
 
 	r.linkMutex.Lock()
 	defer r.linkMutex.Unlock()
-	return fmt.Errorf("is not implemented")
+
+	podKey := types.NamespacedName{
+		Name:      pod.Name,
+		Namespace: pod.Namespace,
+	}
+
+	existing := r.podToPodIPs[podKey]
+	statusPodIPs := make([]netip.Addr, len(pod.Status.PodIPs))
+	for i, v := range pod.Status.PodIPs {
+		addr, err := netip.ParseAddr(v.IP)
+		if err != nil {
+			return err
+		}
+		statusPodIPs[i] = addr
+	}
+
+	for _, ip := range statusPodIPs {
+		if slices.Contains(existing, ip) {
+			continue
+		}
+
+		if err := r.tun.Add(ip); err != nil {
+			if errors.Is(err, tunnel.ErrIPFamilyMismatch) {
+				logger.Info("skipping unsupported pod IP", "pod", podKey, "ip", ip.String())
+				continue
+			}
+			return err
+		}
+	}
+
+	for _, eip := range existing {
+		if slices.Contains(statusPodIPs, eip) {
+			continue
+		}
+
+		if err := r.tun.Del(eip); err != nil {
+			return err
+		}
+		logger.Info("tunnel has been deleted",
+			"caller", "addPod",
+			"pod", podKey,
+			"ip", eip.String(),
+		)
+	}
+
+	r.podToPodIPs[podKey] = statusPodIPs
+	for _, ip := range statusPodIPs {
+		keySet, ok := r.podIPToPod[ip]
+		if !ok {
+			r.podIPToPod[ip] = make(Set[types.NamespacedName], 0)
+		}
+		keySet[podKey] = struct{}{}
+	}
+
+	return nil
 }
 
 // TODO
@@ -100,7 +169,46 @@ func (r *PodReconciler) handlePodDeletion(ctx context.Context, namespacedName ty
 
 	r.linkMutex.Lock()
 	defer r.linkMutex.Unlock()
-	return fmt.Errorf("is not implemented")
+	for _, ip := range r.podToPodIPs[namespacedName] {
+		exists, err := r.existsOtherLiveTunnels(namespacedName, ip)
+		if err != nil {
+			return err
+		}
+
+		if !exists {
+			if err := r.tun.Del(ip); err != nil {
+				return err
+			}
+
+			logger.Info("tunnel has been deleted",
+				"caller", "addPod",
+				"pod", namespacedName,
+				"ip", ip.String(),
+			)
+		}
+
+		if keySet, ok := r.podIPToPod[ip]; ok {
+			delete(keySet, namespacedName)
+			if len(keySet) == 0 {
+				delete(r.podIPToPod, ip)
+			}
+		}
+	}
+
+	delete(r.podToPodIPs, namespacedName)
+
+	return nil
+}
+
+func (r *PodReconciler) existsOtherLiveTunnels(namespacedName types.NamespacedName, ip netip.Addr) (bool, error) {
+	if keySet, ok := r.podIPToPod[ip]; ok {
+		if _, ok := keySet[namespacedName]; ok {
+			return len(keySet) > 1, nil
+		}
+		return false, fmt.Errorf("keySet in the podIPToPod doesn't contain my key. key: %s ip: %s", namespacedName, ip)
+	}
+
+	return false, fmt.Errorf("podIPToPod doesn't contain my IP. key: %s ip: %s", namespacedName, ip)
 }
 
 func (r *PodReconciler) hasEgressAnnotation(pod *corev1.Pod) bool {
