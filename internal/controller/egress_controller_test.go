@@ -121,6 +121,7 @@ var _ = Describe("Egress Controller", func() {
 				sa = &corev1.ServiceAccount{}
 				return k8sClient.Get(ctx, client.ObjectKey{Name: egressServiceAccountName, Namespace: namespace}, sa)
 			}).Should(Succeed())
+			Expect(sa.OwnerReferences).To(HaveLen(0))
 
 			By("Check if ClusterRole is created")
 			var cr *rbacv1.ClusterRole
@@ -133,6 +134,7 @@ var _ = Describe("Egress Controller", func() {
 				Resources: []string{"pods"},
 				Verbs:     []string{"get", "list", "watch"},
 			}}))
+			Expect(cr.OwnerReferences).To(HaveLen(0))
 
 			By("Check if ClusterRoleBinding is created")
 			var crb *rbacv1.ClusterRoleBinding
@@ -145,6 +147,7 @@ var _ = Describe("Egress Controller", func() {
 				Name:      egressServiceAccountName,
 				Namespace: namespace,
 			}}))
+			Expect(crb.OwnerReferences).To(HaveLen(0))
 
 			By("Check if Deployment is created")
 			var dep *appsv1.Deployment
