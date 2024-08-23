@@ -5,7 +5,9 @@ import (
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -40,7 +42,13 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 
 	pod := &corev1.Pod{}
 	if err := r.Get(ctx, req.NamespacedName, pod); err != nil {
-
+		if apierrors.IsNotFound(err) {
+			if err := r.handlePodDeletion(ctx, req.NamespacedName); err != nil {
+				logger.Error(err, "failed to remove tunnel")
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{}, nil
+		}
 	}
 
 	return ctrl.Result{}, nil
@@ -52,11 +60,18 @@ func (r *PodReconciler) shouldHandle(pod *corev1.Pod) bool {
 		return false
 	}
 
-	return false
+	return r.hasEgressAnnotation(pod)
+}
+
+// TODO
+func (r *PodReconciler) handlePodDeletion(ctx context.Context, namespacedName types.NamespacedName) error {
+	logger := log.FromContext(ctx)
+
+	return nil
 }
 
 func (r *PodReconciler) hasEgressAnnotation(pod *corev1.Pod) bool {
-	for k, v := range pod.Annotations {
+	for k, name := range pod.Annotations {
 		if !strings.HasPrefix(k, EgressAnnotationPrefix) {
 			continue
 		}
@@ -66,16 +81,17 @@ func (r *PodReconciler) hasEgressAnnotation(pod *corev1.Pod) bool {
 		}
 
 		// shortcut for the most typical case
-		if v == r.myName {
+		if name == r.EgressName {
 			return true
 		}
 
-		for _, n := range strings.Split(v, ",") {
-			if n == r.myName {
+		for _, n := range strings.Split(name, ",") {
+			if n == r.EgressNamespace {
 				return true
 			}
 		}
 	}
+	return false
 }
 
 // SetupWithManager sets up the controller with the Manager.
