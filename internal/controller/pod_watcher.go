@@ -23,8 +23,8 @@ const (
 	EgressAnnotationPrefix = "egress.pona.cybozu.com/"
 )
 
-// PodReconciler reconciles a Pod object
-type PodReconciler struct {
+// PodWatcher reconciles a Pod object
+type PodWatcher struct {
 	client.Client
 	Scheme *runtime.Scheme
 
@@ -52,7 +52,7 @@ type Set[T comparable] map[T]struct{}
 //
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.19.0/pkg/reconcile
-func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *PodWatcher) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
 	pod := &corev1.Pod{}
@@ -92,7 +92,7 @@ func isTerminated(pod *corev1.Pod) bool {
 	return pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed
 }
 
-func (r *PodReconciler) shouldHandle(pod *corev1.Pod) bool {
+func (r *PodWatcher) shouldHandle(pod *corev1.Pod) bool {
 	if pod.Spec.HostNetwork {
 		// Egress feature is not available for Pods running in the host network.
 		return false
@@ -101,7 +101,7 @@ func (r *PodReconciler) shouldHandle(pod *corev1.Pod) bool {
 	return r.hasEgressAnnotation(pod)
 }
 
-func (r *PodReconciler) handlePodRunning(ctx context.Context, pod *corev1.Pod) error {
+func (r *PodWatcher) handlePodRunning(ctx context.Context, pod *corev1.Pod) error {
 	logger := log.FromContext(ctx)
 
 	r.linkMutex.Lock()
@@ -155,16 +155,18 @@ func (r *PodReconciler) handlePodRunning(ctx context.Context, pod *corev1.Pod) e
 	for _, ip := range statusPodIPs {
 		keySet, ok := r.podIPToPod[ip]
 		if !ok {
-			r.podIPToPod[ip] = make(Set[types.NamespacedName], 0)
+			r.podIPToPod[ip] = Set[types.NamespacedName]{
+				podKey: struct{}{},
+			}
+		} else {
+			keySet[podKey] = struct{}{}
 		}
-		keySet[podKey] = struct{}{}
 	}
 
 	return nil
 }
 
-// TODO
-func (r *PodReconciler) handlePodDeletion(ctx context.Context, namespacedName types.NamespacedName) error {
+func (r *PodWatcher) handlePodDeletion(ctx context.Context, namespacedName types.NamespacedName) error {
 	logger := log.FromContext(ctx)
 
 	r.linkMutex.Lock()
@@ -200,7 +202,7 @@ func (r *PodReconciler) handlePodDeletion(ctx context.Context, namespacedName ty
 	return nil
 }
 
-func (r *PodReconciler) existsOtherLiveTunnels(namespacedName types.NamespacedName, ip netip.Addr) (bool, error) {
+func (r *PodWatcher) existsOtherLiveTunnels(namespacedName types.NamespacedName, ip netip.Addr) (bool, error) {
 	if keySet, ok := r.podIPToPod[ip]; ok {
 		if _, ok := keySet[namespacedName]; ok {
 			return len(keySet) > 1, nil
@@ -211,7 +213,7 @@ func (r *PodReconciler) existsOtherLiveTunnels(namespacedName types.NamespacedNa
 	return false, fmt.Errorf("podIPToPod doesn't contain my IP. key: %s ip: %s", namespacedName, ip)
 }
 
-func (r *PodReconciler) hasEgressAnnotation(pod *corev1.Pod) bool {
+func (r *PodWatcher) hasEgressAnnotation(pod *corev1.Pod) bool {
 	for k, name := range pod.Annotations {
 		if !strings.HasPrefix(k, EgressAnnotationPrefix) {
 			continue
@@ -236,7 +238,7 @@ func (r *PodReconciler) hasEgressAnnotation(pod *corev1.Pod) bool {
 }
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *PodReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *PodWatcher) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1.Pod{}).
 		Complete(r)
