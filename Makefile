@@ -65,11 +65,11 @@ mod: ## Run go mod tidy against code.
 	go mod tidy
 
 .PHONY: test
-test: vet envtest check-generate ## Run tests.
+test: envtest manifests generate fmt vet mod ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
 .PHONY: check-generate
-check-generate: manifests generate fmt mod 
+check-generate: manifests generate fmt mod
 	git diff --exit-code --name-only
 
 # Utilize Kind or modify the e2e tests to load the image locally, enabling compatibility with other vendors.
