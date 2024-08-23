@@ -1,0 +1,27 @@
+# permissions for end users to edit egresses.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: pona
+    app.kubernetes.io/managed-by: kustomize
+  name: egress-editor-role
+rules:
+- apiGroups:
+  - pona.cybozu.com
+  resources:
+  - egresses
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - pona.cybozu.com
+  resources:
+  - egresses/status
+  verbs:
+  - get

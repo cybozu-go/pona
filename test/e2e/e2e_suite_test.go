@@ -11,6 +11,6 @@ import (
 // Run e2e tests using the Ginkgo runner.
 func TestE2E(t *testing.T) {
 	RegisterFailHandler(Fail)
-	_, _ = fmt.Fprintf(GinkgoWriter, "Starting tmp suite\n")
+	_, _ = fmt.Fprintf(GinkgoWriter, "Starting pona suite\n")
 	RunSpecs(t, "e2e suite")
 }

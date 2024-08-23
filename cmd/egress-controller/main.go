@@ -18,6 +18,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
+
+	ponav1beta1 "github.com/cybozu-go/pona/api/v1beta1"
+	"github.com/cybozu-go/pona/internal/controller"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -29,7 +32,12 @@ var (
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
+	utilruntime.Must(ponav1beta1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
+}
+
+type Config struct {
+	FoUPort int
 }
 
 func main() {
@@ -39,6 +47,9 @@ func main() {
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var tlsOpts []func(*tls.Config)
+
+	var config Config
+
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -49,6 +60,8 @@ func main() {
 		"If set, the metrics endpoint is served securely via HTTPS. Use --metrics-secure=false to use HTTP instead.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+	flag.IntVar(&config.FoUPort, "fou-port", 5555, "port number for foo-over-udp tunnels")
+
 	opts := zap.Options{
 		Development: true,
 	}
@@ -124,6 +137,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	if err = (&controller.EgressReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+		Port:   int32(config.FoUPort),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "Egress")
+		os.Exit(1)
+	}
 	// +kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {

@@ -44,8 +44,9 @@ help: ## Display this help.
 ##@ Development
 
 .PHONY: manifests
-manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
-	$(CONTROLLER_GEN) rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
+manifests: controller-gen yq ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
+	$(CONTROLLER_GEN) rbac:roleName=egress-controller-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
+	$(YQ) -i 'del(.spec.versions.[].schema.openAPIV3Schema.properties.spec.properties.template | .. |select(key == "description"))' config/crd/bases/pona.cybozu.com_egresses.yaml
 
 .PHONY: generate
 generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
@@ -59,9 +60,17 @@ fmt: ## Run go fmt against code.
 vet: ## Run go vet against code.
 	go vet ./...
 
+.PHONY: mod
+mod: ## Run go mod tidy against code.
+	go mod tidy
+
 .PHONY: test
-test: manifests generate fmt vet envtest ## Run tests.
+test: vet envtest check-generate ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
+
+.PHONY: check-generate
+check-generate: manifests generate fmt mod 
+	git diff --exit-code --name-only
 
 # Utilize Kind or modify the e2e tests to load the image locally, enabling compatibility with other vendors.
 .PHONY: test-e2e  # Run the e2e tests against a Kind k8s instance that is spun up.
@@ -79,11 +88,11 @@ lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 ##@ Build
 
 .PHONY: build
-build: manifests generate fmt vet ## Build manager binary.
+build: manifests generate fmt vet mod ## Build manager binary.
 	go build -o bin/egress-controller cmd/egress-controller/main.go
 
 .PHONY: run
-run: manifests generate fmt vet ## Run a controller from your host.
+run: manifests generate fmt vet mod ## Run a controller from your host.
 	go run ./cmd/egress-controller/main.go
 
 # If you wish to build the manager image targeting other platforms you can use the --platform flag.
@@ -156,12 +165,16 @@ KUSTOMIZE ?= $(LOCALBIN)/kustomize
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
+YQ = $(LOCALBIN)/yq
+WGET_OPTIONS := --retry-on-http-error=503 --retry-connrefused --no-verbose
+WGET = wget $(WGET_OPTIONS)
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.4.2
 CONTROLLER_TOOLS_VERSION ?= v0.15.0
 ENVTEST_VERSION ?= release-0.18
 GOLANGCI_LINT_VERSION ?= v1.59.1
+YQ_VERSION ?= 4.44.3
 
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
@@ -182,6 +195,15 @@ $(ENVTEST): $(LOCALBIN)
 golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
 $(GOLANGCI_LINT): $(LOCALBIN)
 	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
+
+
+.PHONY: yq
+yq: $(YQ)
+$(YQ): $(LOCALBIN)
+	$(WGET) -O yq.tar.gz https://github.com/mikefarah/yq/releases/download/v$(YQ_VERSION)/yq_linux_amd64.tar.gz
+	tar -C $(LOCALBIN)/ -zxf yq.tar.gz ./yq_linux_amd64 -O > $@
+	rm -f yq.tar.gz
+	chmod +x $@
 
 # go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist
 # $1 - target path with name of binary

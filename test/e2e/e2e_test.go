@@ -11,7 +11,7 @@ import (
 	"github.com/cybozu-go/pona/test/utils"
 )
 
-const namespace = "tmp-system"
+const namespace = "pona-system"
 
 var _ = Describe("controller", Ordered, func() {
 	BeforeAll(func() {
@@ -44,7 +44,7 @@ var _ = Describe("controller", Ordered, func() {
 			var err error
 
 			// projectimage stores the name of the image used in the example
-			var projectimage = "example.com/tmp:v0.0.1"
+			var projectimage = "example.com/pona:v0.0.1"
 
 			By("building the manager(Operator) image")
 			cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", projectimage))
@@ -60,17 +60,17 @@ var _ = Describe("controller", Ordered, func() {
 			_, err = utils.Run(cmd)
 			ExpectWithOffset(1, err).NotTo(HaveOccurred())
 
-			By("deploying the controller-manager")
+			By("deploying the egress-controller")
 			cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", projectimage))
 			_, err = utils.Run(cmd)
 			ExpectWithOffset(1, err).NotTo(HaveOccurred())
 
-			By("validating that the controller-manager pod is running as expected")
+			By("validating that the egress-controller pod is running as expected")
 			verifyControllerUp := func() error {
 				// Get pod name
 
 				cmd = exec.Command("kubectl", "get",
-					"pods", "-l", "control-plane=controller-manager",
+					"pods", "-l", "control-plane=egress-controller",
 					"-o", "go-template={{ range .items }}"+
 						"{{ if not .metadata.deletionTimestamp }}"+
 						"{{ .metadata.name }}"+
@@ -85,7 +85,7 @@ var _ = Describe("controller", Ordered, func() {
 					return fmt.Errorf("expect 1 controller pods running, but got %d", len(podNames))
 				}
 				controllerPodName = podNames[0]
-				ExpectWithOffset(2, controllerPodName).Should(ContainSubstring("controller-manager"))
+				ExpectWithOffset(2, controllerPodName).Should(ContainSubstring("egress-controller"))
 
 				// Validate pod status
 				cmd = exec.Command("kubectl", "get",
