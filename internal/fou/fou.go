@@ -1,8 +1,10 @@
 package fou
 
 import (
+	"crypto/sha1"
 	"errors"
 	"fmt"
+	"net"
 	"net/netip"
 	"os/exec"
 	"strconv"
@@ -15,7 +17,27 @@ import (
 	"github.com/vishvananda/netlink"
 )
 
+// Prefixes for Foo-over-UDP tunnel link names
+const (
+	FoU4LinkPrefix = "fou4_"
+	FoU6LinkPrefix = "fou6_"
+)
+
 const fouDummy = "fou-dummy"
+
+func convNetIP(addr netip.Addr) net.IP {
+	return net.IP(addr.AsSlice())
+}
+
+func fouName(addr netip.Addr) string {
+	if addr.Is4() {
+		return fmt.Sprintf("%s%x", FoU4LinkPrefix, addr.As4())
+	}
+
+	addrSlice := addr.As16()
+	hash := sha1.Sum(addrSlice[:])
+	return fmt.Sprintf("%s%x", FoU6LinkPrefix, hash[:4])
+}
 
 func modProbe(module string) error {
 	out, err := exec.Command("/sbin/modprobe", module).CombinedOutput()
@@ -138,10 +160,99 @@ func (t *fouTunnel) AddPeer(addr netip.Addr) (netlink.Link, error) {
 	} else if addr.Is6() {
 		return t.addPeer6(addr)
 	}
-	return errors.New("unknown ip families")
+	return nil, errors.New("unknown ip families")
 }
 
 func (t *fouTunnel) addPeer4(addr netip.Addr) (netlink.Link, error) {
+	if t.local4 == nil {
+		return nil, tunnel.ErrIPFamilyMismatch
+	}
+
+	linkname := fouName(addr)
+
+	link, err := netlink.LinkByName(linkname)
+	if err != nil {
+		if _, ok := err.(netlink.LinkNotFoundError); !ok {
+			return nil, fmt.Errorf("netlink: failed to get link by name: %w", err)
+		}
+		// ignore LinkNotFoundError
+	}
+
+	attrs := netlink.NewLinkAttrs()
+	attrs.Name = linkname
+	link = &netlink.Iptun{
+		LinkAttrs:  attrs,
+		Ttl:        64,
+		EncapType:  netlink.FOU_ENCAP_DIRECT,
+		EncapDport: uint16(t.port),
+		EncapSport: 0, // sportauto is always on
+		Remote:     convNetIP(addr),
+		Local:      convNetIP(*t.local4),
+	}
+	if err := netlink.LinkAdd(link); err != nil {
+		return nil, fmt.Errorf("netlink: failed to add fou link: %w", err)
+	}
+
+	return link, nil
+}
+func (t *fouTunnel) addPeer6(addr netip.Addr) (netlink.Link, error) {
 
 }
-func (t *fouTunnel) addPeer6(addr netip.Addr) (netlink.Link, error)
+
+// setupFlowBasedIP[4,6]TunDevice creates an IPv4 or IPv6 tunnel device
+//
+// This flow based IPIP tunnel device is used to decapsulate packets from
+// the router Pods.
+//
+// Calling this function may result in tunl0 (v4) or ip6tnl0 (v6)
+// fallback interface being renamed to coil_tunl or coil_ip6tnl.
+// This is to communicate to the user that this plugin has taken
+// control of the encapsulation stack on the netns, as it currently
+// doesn't explicitly support sharing it with other tools/CNIs.
+// Fallback devices are left unused for production traffic.
+// Only devices that were explicitly created are used.
+//
+// This fallback interface is present as a result of loading the
+// ipip and ip6_tunnel kernel modules by fou tunnel interfaces.
+// These are catch-all interfaces for the ipip decapsulation stack.
+// By default, these interfaces will be created in new network namespaces,
+// but this behavior can be disabled by setting net.core.fb_tunnels_only_for_init_net = 2.
+func setupFlowBasedIP4TunDevice() error {
+	ipip4Device := "coil_ipip4"
+	// Set up IPv4 tunnel device if requested.
+	if err := setupDevice(&netlink.Iptun{
+		LinkAttrs: netlink.LinkAttrs{Name: ipip4Device},
+		FlowBased: true,
+	}); err != nil {
+		return fmt.Errorf("creating %s: %w", ipip4Device, err)
+	}
+
+	// Rename fallback device created by potential kernel module load after
+	// creating tunnel interface.
+	if err := renameDevice("tunl0", "coil_tunl"); err != nil {
+		return fmt.Errorf("renaming fallback device %s: %w", "tunl0", err)
+	}
+
+	return nil
+}
+
+// See setupFlowBasedIP4TunDevice
+func setupFlowBasedIP6TunDevice() error {
+	ipip6Device := "coil_ipip6"
+
+	// Set up IPv6 tunnel device if requested.
+	if err := setupDevice(&netlink.Ip6tnl{
+		LinkAttrs: netlink.LinkAttrs{Name: ipip6Device},
+		FlowBased: true,
+	}); err != nil {
+		return fmt.Errorf("creating %s: %w", ipip6Device, err)
+	}
+
+	// Rename fallback device created by potential kernel module load after
+	// creating tunnel interface.
+	if err := renameDevice("ip6tnl0", "coil_ip6tnl"); err != nil {
+		return fmt.Errorf("renaming fallback device %s: %w", "tunl0", err)
+	}
+
+	return nil
+}
