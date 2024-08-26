@@ -1,8 +1,9 @@
 package fou
 
 import (
+	"errors"
 	"fmt"
-	"net"
+	"net/netip"
 	"os/exec"
 	"strconv"
 	"sync"
@@ -10,6 +11,7 @@ import (
 	"github.com/containernetworking/plugins/pkg/ip"
 	"github.com/containernetworking/plugins/pkg/utils/sysctl"
 	"github.com/coreos/go-iptables/iptables"
+	"github.com/cybozu-go/pona/internal/tunnel"
 	"github.com/vishvananda/netlink"
 )
 
@@ -35,11 +37,13 @@ func disableRPFilter() error {
 
 type fouTunnel struct {
 	port   int
-	local4 net.IP
-	local6 net.IP
+	local4 *netip.Addr
+	local6 *netip.Addr
 
 	mu sync.Mutex
 }
+
+var _ tunnel.Tunnel = &fouTunnel{}
 
 func (t *fouTunnel) Init() error {
 	_, err := netlink.LinkByName(fouDummy)
@@ -71,16 +75,8 @@ func (t *fouTunnel) Init() error {
 			return fmt.Errorf("netlink: fou addlink failed: %w", err)
 		}
 
-		ipt, err := iptables.NewWithProtocol(iptables.ProtocolIPv4)
-		if err != nil {
+		if err := t.initIPTables(iptables.ProtocolIPv4); err != nil {
 			return err
-		}
-		// workaround for kube-proxy's double NAT problem
-		rulespec := []string{
-			"-p", "udp", "--dport", strconv.Itoa(t.port), "-j", "CHECKSUM", "--checksum-fill",
-		}
-		if err := ipt.Insert("mangle", "POSTROUTING", 1, rulespec...); err != nil {
-			return fmt.Errorf("failed to setup mangle table: %w", err)
 		}
 	}
 	if t.local6 != nil {
@@ -101,16 +97,51 @@ func (t *fouTunnel) Init() error {
 			return fmt.Errorf("netlink: fou addlink failed: %w", err)
 		}
 
-		ipt, err := iptables.NewWithProtocol(iptables.ProtocolIPv6)
-		if err != nil {
+		if err := t.initIPTables(iptables.ProtocolIPv6); err != nil {
 			return err
 		}
-		// workaround for kube-proxy's double NAT problem
-		rulespec := []string{
-			"-p", "udp", "--dport", strconv.Itoa(t.port), "-j", "CHECKSUM", "--checksum-fill",
-		}
-		if err := ipt.Insert("mangle", "POSTROUTING", 1, rulespec...); err != nil {
-			return fmt.Errorf("failed to setup mangle table: %w", err)
-		}
 	}
+
+	attrs := netlink.NewLinkAttrs()
+	attrs.Name = fouDummy
+	return netlink.LinkAdd(&netlink.Dummy{LinkAttrs: attrs})
+
 }
+
+func (t *fouTunnel) initIPTables(p iptables.Protocol) error {
+	ipt, err := iptables.NewWithProtocol(p)
+	if err != nil {
+		return err
+	}
+	// workaround for kube-proxy's double NAT problem
+	rulespec := []string{
+		"-p", "udp", "--dport", strconv.Itoa(t.port), "-j", "CHECKSUM", "--checksum-fill",
+	}
+	if err := ipt.Insert("mangle", "POSTROUTING", 1, rulespec...); err != nil {
+		return fmt.Errorf("failed to setup mangle table: %w", err)
+	}
+
+	return nil
+}
+
+func (t *fouTunnel) IsInitialized() bool {
+	_, err := netlink.LinkByName(fouDummy)
+	return err == nil
+}
+
+func (t *fouTunnel) AddPeer(addr netip.Addr) (netlink.Link, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if addr.Is4() {
+		return t.addPeer4(addr)
+	} else if addr.Is6() {
+		return t.addPeer6(addr)
+	}
+	return errors.New("unknown ip families")
+}
+
+func (t *fouTunnel) addPeer4(addr netip.Addr) (netlink.Link, error) {
+
+}
+func (t *fouTunnel) addPeer6(addr netip.Addr) (netlink.Link, error)
