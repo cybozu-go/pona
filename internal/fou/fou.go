@@ -8,7 +8,6 @@ import (
 	"net/netip"
 	"os/exec"
 	"strconv"
-	"sync"
 
 	"github.com/containernetworking/plugins/pkg/ip"
 	"github.com/containernetworking/plugins/pkg/utils/sysctl"
@@ -61,8 +60,6 @@ type fouTunnel struct {
 	port   int
 	local4 *netip.Addr
 	local6 *netip.Addr
-
-	mu sync.Mutex
 }
 
 var _ tunnel.Tunnel = &fouTunnel{}
@@ -152,9 +149,6 @@ func (t *fouTunnel) IsInitialized() bool {
 }
 
 func (t *fouTunnel) AddPeer(addr netip.Addr) (netlink.Link, error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
 	if addr.Is4() {
 		return t.addPeer4(addr)
 	} else if addr.Is6() {
