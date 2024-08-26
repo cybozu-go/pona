@@ -28,14 +28,15 @@ func convNetIP(addr netip.Addr) net.IP {
 	return net.IP(addr.AsSlice())
 }
 
-func fouName(addr netip.Addr) string {
+func fouName(addr netip.Addr) (string, error) {
 	if addr.Is4() {
-		return fmt.Sprintf("%s%x", FoU4LinkPrefix, addr.As4())
+		return fmt.Sprintf("%s%x", FoU4LinkPrefix, addr.As4()), nil
+	} else if addr.Is6() {
+		addrSlice := addr.As16()
+		hash := sha1.Sum(addrSlice[:])
+		return fmt.Sprintf("%s%x", FoU6LinkPrefix, hash[:4]), nil
 	}
-
-	addrSlice := addr.As16()
-	hash := sha1.Sum(addrSlice[:])
-	return fmt.Sprintf("%s%x", FoU6LinkPrefix, hash[:4])
+	return "", fmt.Errorf("unknown ip families ip=%s", addr.String())
 }
 
 func modProbe(module string) error {
@@ -70,10 +71,10 @@ var _ tunnel.Controller = &FouTunnelController{}
 // localIPv6 is the same as localIPv4 for IPv6.
 func NewFoUTunnelController(port int, localIPv4, localIPv6 *netip.Addr) (*FouTunnelController, error) {
 	if localIPv4 != nil && !localIPv4.Is4() {
-		return nil, errors.New("invalid IPv4 address")
+		return nil, tunnel.ErrIPFamilyMismatch
 	}
 	if localIPv6 != nil && !localIPv6.Is6() {
-		return nil, errors.New("invalid IPv6 address")
+		return nil, tunnel.ErrIPFamilyMismatch
 	}
 	return &FouTunnelController{
 		port:   port,
@@ -172,7 +173,7 @@ func (t *FouTunnelController) AddPeer(addr netip.Addr) (netlink.Link, error) {
 	} else if addr.Is6() {
 		return t.addPeer6(addr)
 	}
-	return nil, errors.New("unknown ip families")
+	return nil, fmt.Errorf("unknown ip families ip=%s", addr.String())
 }
 
 func (t *FouTunnelController) addPeer4(addr netip.Addr) (netlink.Link, error) {
@@ -180,8 +181,10 @@ func (t *FouTunnelController) addPeer4(addr netip.Addr) (netlink.Link, error) {
 		return nil, tunnel.ErrIPFamilyMismatch
 	}
 
-	linkname := fouName(addr)
-
+	linkname, err := fouName(addr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate fou name: %w", err)
+	}
 	link, err := netlink.LinkByName(linkname)
 	if err != nil {
 		if _, ok := err.(netlink.LinkNotFoundError); !ok {
