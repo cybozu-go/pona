@@ -225,12 +225,14 @@ func (t *FouTunnelController) addPeer6(addr netip.Addr) (netlink.Link, error) {
 		return nil, fmt.Errorf("failed to generate fou name: %w", err)
 	}
 	link, err := netlink.LinkByName(linkname)
-	if err != nil {
+	if err == nil {
+		// if already exists, return old link
+		return link, nil
+	} else {
 		var linkNotFoundError netlink.LinkNotFoundError
 		if !errors.As(err, &linkNotFoundError) {
 			return nil, fmt.Errorf("netlink: failed to get link by name: %w", err)
 		}
-		// ignore LinkNotFoundError
 	}
 
 	attrs := netlink.NewLinkAttrs()
@@ -242,13 +244,13 @@ func (t *FouTunnelController) addPeer6(addr netip.Addr) (netlink.Link, error) {
 		EncapDport: uint16(t.port),
 		EncapSport: 0, // sportauto is always on
 		Remote:     netiputil.ConvNetIP(addr),
-		Local:      netiputil.ConvNetIP(*t.local4),
+		Local:      netiputil.ConvNetIP(*t.local6),
 	}
 	if err := netlink.LinkAdd(link); err != nil {
 		return nil, fmt.Errorf("netlink: failed to add fou link: %w", err)
 	}
 
-	if err := setupFlowBasedIP4TunDevice(); err != nil {
+	if err := setupFlowBasedIP6TunDevice(); err != nil {
 		return nil, fmt.Errorf("netlink: failed to setup ipip device: %w", err)
 	}
 

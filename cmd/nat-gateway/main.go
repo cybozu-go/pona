@@ -2,8 +2,11 @@ package main
 
 import (
 	"crypto/tls"
+	"errors"
 	"flag"
+	"net/netip"
 	"os"
+	"strings"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -21,6 +24,8 @@ import (
 
 	ponav1beta1 "github.com/cybozu-go/pona/api/v1beta1"
 	"github.com/cybozu-go/pona/internal/controller"
+	"github.com/cybozu-go/pona/internal/fou"
+	"github.com/cybozu-go/pona/internal/nat"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -137,10 +142,59 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err = (&controller.PodWatcher{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
+	myNS := os.Getenv(controller.EnvPodNamespace)
+	if myNS == "" {
+		setupLog.Error(errors.New(controller.EnvPodNamespace+" environment variable must be set"), "unable to get env")
+		os.Exit(1)
+	}
+
+	myName := os.Getenv(controller.EnvEgressName)
+	if myName == "" {
+		setupLog.Error(errors.New(controller.EnvEgressName+" environment variable must be set"), "unable to get env")
+		os.Exit(1)
+	}
+
+	myAddresses := strings.Split(os.Getenv(controller.EnvAddresses), ",")
+	if len(myAddresses) == 0 {
+		setupLog.Error(errors.New(controller.EnvAddresses+" environment variable must be set"), "unable to get env")
+		os.Exit(1)
+	}
+
+	var ipv4, ipv6 *netip.Addr
+	for _, addr := range myAddresses {
+		n, err := netip.ParseAddr(addr)
+		if err != nil {
+			setupLog.Error(errors.New(controller.EnvAddresses+" contains invalid address"), "unable to parse address",
+				"address", addr,
+			)
+			os.Exit(1)
+		}
+		if n.Is4() {
+			ipv4 = &n
+		} else {
+			ipv6 = &n
+		}
+	}
+
+	fc, err := fou.NewFoUTunnelController(config.FoUPort, ipv4, ipv6)
+	if err != nil {
+		setupLog.Error(err, "unable to create FouTunnelController")
+		os.Exit(1)
+	}
+	nc, err := nat.NewController("eth0", ipv4, ipv6)
+	if err != nil {
+		setupLog.Error(err, "unable to create nat.Controller")
+		os.Exit(1)
+	}
+
+	if err = controller.NewPodWatcher(
+		mgr.GetClient(),
+		mgr.GetScheme(),
+		myName,
+		myNS,
+		fc,
+		nc,
+	).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Pod")
 		os.Exit(1)
 	}

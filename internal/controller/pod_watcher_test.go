@@ -8,6 +8,7 @@ import (
 	"github.com/cybozu-go/pona/internal/tunnel"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/vishvananda/netlink"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -26,12 +27,12 @@ func NewMockTunnel() mockTunnel {
 	}
 }
 
-func (m mockTunnel) Add(addr netip.Addr) error {
+func (m mockTunnel) AddPeer(addr netip.Addr) (netlink.Link, error) {
 	m.tunnels[addr] = struct{}{}
-	return nil
+	return nil, nil
 }
 
-func (m mockTunnel) Del(addr netip.Addr) error {
+func (m mockTunnel) DelPeer(addr netip.Addr) error {
 	delete(m.tunnels, addr)
 	return nil
 }

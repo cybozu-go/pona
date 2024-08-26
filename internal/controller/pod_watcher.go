@@ -43,6 +43,21 @@ type PodWatcher struct {
 
 type Set[T comparable] map[T]struct{}
 
+func NewPodWatcher(client client.Client, scheme *runtime.Scheme, egressName, egressNamespace string, t tunnel.Controller, n nat.Controller) *PodWatcher {
+	return &PodWatcher{
+		Client:          client,
+		Scheme:          scheme,
+		EgressName:      egressName,
+		EgressNamespace: egressNamespace,
+
+		podToPodIPs: make(map[types.NamespacedName][]netip.Addr),
+		podIPToPod:  make(map[netip.Addr]Set[types.NamespacedName]),
+
+		tun: t,
+		nat: n,
+	}
+}
+
 // +kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
@@ -186,7 +201,7 @@ func (r *PodWatcher) handlePodDeletion(ctx context.Context, namespacedName types
 		}
 
 		if !exists {
-			if err := r.tun.Del(ip); err != nil {
+			if err := r.tun.DelPeer(ip); err != nil {
 				return err
 			}
 
