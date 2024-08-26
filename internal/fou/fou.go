@@ -4,7 +4,6 @@ import (
 	"crypto/sha1"
 	"errors"
 	"fmt"
-	"net"
 	"net/netip"
 	"os/exec"
 	"strconv"
@@ -13,6 +12,7 @@ import (
 	"github.com/containernetworking/plugins/pkg/utils/sysctl"
 	"github.com/coreos/go-iptables/iptables"
 	"github.com/cybozu-go/pona/internal/tunnel"
+	"github.com/cybozu-go/pona/internal/util/netiputil"
 	"github.com/vishvananda/netlink"
 )
 
@@ -23,10 +23,6 @@ const (
 )
 
 const fouDummy = "fou-dummy"
-
-func convNetIP(addr netip.Addr) net.IP {
-	return net.IP(addr.AsSlice())
-}
 
 func fouName(addr netip.Addr) (string, error) {
 	if addr.Is4() {
@@ -201,8 +197,8 @@ func (t *FouTunnelController) addPeer4(addr netip.Addr) (netlink.Link, error) {
 		EncapType:  netlink.FOU_ENCAP_DIRECT,
 		EncapDport: uint16(t.port),
 		EncapSport: 0, // sportauto is always on
-		Remote:     convNetIP(addr),
-		Local:      convNetIP(*t.local4),
+		Remote:     netiputil.ConvNetIP(addr),
+		Local:      netiputil.ConvNetIP(*t.local4),
 	}
 	if err := netlink.LinkAdd(link); err != nil {
 		return nil, fmt.Errorf("netlink: failed to add fou link: %w", err)
