@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/cybozu-go/pona/internal/nat"
 	"github.com/cybozu-go/pona/internal/tunnel"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -37,6 +38,7 @@ type PodWatcher struct {
 	podIPToPod  map[netip.Addr]Set[types.NamespacedName]
 
 	tun tunnel.Controller
+	nat nat.Controller
 }
 
 type Set[T comparable] map[T]struct{}
@@ -127,13 +129,19 @@ func (r *PodWatcher) handlePodRunning(ctx context.Context, pod *corev1.Pod) erro
 			continue
 		}
 
-		if err := r.tun.Add(ip); err != nil {
+		link, err := r.tun.AddPeer(ip)
+		if err != nil {
 			if errors.Is(err, tunnel.ErrIPFamilyMismatch) {
 				logger.Info("skipping unsupported pod IP", "pod", podKey, "ip", ip.String())
 				continue
 			}
 			return err
 		}
+
+		if err := r.nat.AddClient(ip, link); err != nil {
+			return fmt.Errorf("failed to setup NAT for ip=%s; %w", ip, err)
+		}
+
 	}
 
 	for _, eip := range existing {
@@ -141,7 +149,7 @@ func (r *PodWatcher) handlePodRunning(ctx context.Context, pod *corev1.Pod) erro
 			continue
 		}
 
-		if err := r.tun.Del(eip); err != nil {
+		if err := r.tun.DelPeer(eip); err != nil {
 			return err
 		}
 		logger.Info("tunnel has been deleted",

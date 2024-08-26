@@ -84,7 +84,8 @@ func (t *FouTunnelController) Init() error {
 	if err == nil {
 		return nil
 	}
-	if _, ok := err.(netlink.LinkNotFoundError); !ok {
+	var linkNotFoundError netlink.LinkNotFoundError
+	if !errors.As(err, &linkNotFoundError) {
 		return fmt.Errorf("failed to initialize fou tunnel: %w", err)
 	}
 
@@ -182,8 +183,51 @@ func (t *FouTunnelController) addPeer4(addr netip.Addr) (netlink.Link, error) {
 		return nil, fmt.Errorf("failed to generate fou name: %w", err)
 	}
 	link, err := netlink.LinkByName(linkname)
+	if err == nil {
+		// if already exists, return old link
+		return link, nil
+	} else {
+		var linkNotFoundError netlink.LinkNotFoundError
+		if !errors.As(err, &linkNotFoundError) {
+			return nil, fmt.Errorf("netlink: failed to get link by name: %w", err)
+		}
+	}
+
+	attrs := netlink.NewLinkAttrs()
+	attrs.Name = linkname
+	link = &netlink.Iptun{
+		LinkAttrs:  attrs,
+		Ttl:        64,
+		EncapType:  netlink.FOU_ENCAP_DIRECT,
+		EncapDport: uint16(t.port),
+		EncapSport: 0, // sportauto is always on
+		Remote:     netiputil.ConvNetIP(addr),
+		Local:      netiputil.ConvNetIP(*t.local4),
+	}
+	if err := netlink.LinkAdd(link); err != nil {
+		return nil, fmt.Errorf("netlink: failed to add fou link: %w", err)
+	}
+
+	if err := setupFlowBasedIP4TunDevice(); err != nil {
+		return nil, fmt.Errorf("netlink: failed to setup ipip device: %w", err)
+	}
+
+	return link, nil
+}
+
+func (t *FouTunnelController) addPeer6(addr netip.Addr) (netlink.Link, error) {
+	if t.local6 == nil {
+		return nil, tunnel.ErrIPFamilyMismatch
+	}
+
+	linkname, err := fouName(addr)
 	if err != nil {
-		if _, ok := err.(netlink.LinkNotFoundError); !ok {
+		return nil, fmt.Errorf("failed to generate fou name: %w", err)
+	}
+	link, err := netlink.LinkByName(linkname)
+	if err != nil {
+		var linkNotFoundError netlink.LinkNotFoundError
+		if !errors.As(err, &linkNotFoundError) {
 			return nil, fmt.Errorf("netlink: failed to get link by name: %w", err)
 		}
 		// ignore LinkNotFoundError
@@ -211,8 +255,21 @@ func (t *FouTunnelController) addPeer4(addr netip.Addr) (netlink.Link, error) {
 	return link, nil
 }
 
-func (t *FouTunnelController) addPeer6(addr netip.Addr) (netlink.Link, error) {
+func (t *FouTunnelController) DelPeer(addr netip.Addr) error {
+	linkName, err := fouName(addr)
+	if err != nil {
+		return fmt.Errorf("failed to generate fou name: %w", err)
+	}
 
+	link, err := netlink.LinkByName(linkName)
+	if err != nil {
+		var linkNotFoundError netlink.LinkNotFoundError
+		if errors.As(err, &linkNotFoundError) {
+			return nil
+		}
+		return fmt.Errorf("failed to delete interface: %w", err)
+	}
+	return netlink.LinkDel(link)
 }
 
 // setupFlowBasedIP[4,6]TunDevice creates an IPv4 or IPv6 tunnel device
