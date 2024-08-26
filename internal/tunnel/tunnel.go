@@ -5,15 +5,15 @@ import (
 	"net/netip"
 )
 
-type Tunnel interface {
+type Controller interface {
 	// Init starts FoU listening socket.
 	Init() error
 
-	// IsInitialized checks if this Tunnel has been initialized
+	// IsInitialized checks if this Controller has been initialized
 	IsInitialized() bool
 
 	// Add setups tunnel devices to the given peer and returns them.
-	// If Tunnel does not setup for the IP family of the given address,
+	// If Controller does not setup for the IP family of the given address,
 	// this returns ErrIPFamilyMismatch error.
 	Add(netip.Addr) error
 

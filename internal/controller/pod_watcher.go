@@ -36,7 +36,7 @@ type PodWatcher struct {
 	podToPodIPs map[types.NamespacedName][]netip.Addr
 	podIPToPod  map[netip.Addr]Set[types.NamespacedName]
 
-	tun tunnel.Tunnel
+	tun tunnel.Controller
 }
 
 type Set[T comparable] map[T]struct{}

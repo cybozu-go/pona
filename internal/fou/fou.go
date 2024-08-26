@@ -56,15 +56,33 @@ func disableRPFilter() error {
 	return nil
 }
 
-type fouTunnel struct {
+type FouTunnelController struct {
 	port   int
 	local4 *netip.Addr
 	local6 *netip.Addr
 }
 
-var _ tunnel.Tunnel = &fouTunnel{}
+var _ tunnel.Controller = &FouTunnelController{}
 
-func (t *fouTunnel) Init() error {
+// NewFoUTunnel creates a new fouTunnel.
+// port is the UDP port to receive FoU packets.
+// localIPv4 is the local IPv4 address of the IPIP tunnel.  This can be nil.
+// localIPv6 is the same as localIPv4 for IPv6.
+func NewFoUTunnelController(port int, localIPv4, localIPv6 *netip.Addr) (*FouTunnelController, error) {
+	if localIPv4 != nil && !localIPv4.Is4() {
+		return nil, errors.New("invalid IPv4 address")
+	}
+	if localIPv6 != nil && !localIPv6.Is6() {
+		return nil, errors.New("invalid IPv6 address")
+	}
+	return &FouTunnelController{
+		port:   port,
+		local4: localIPv4,
+		local6: localIPv6,
+	}, nil
+}
+
+func (t *FouTunnelController) Init() error {
 	_, err := netlink.LinkByName(fouDummy)
 	if err == nil {
 		return nil
@@ -127,7 +145,7 @@ func (t *fouTunnel) Init() error {
 
 }
 
-func (t *fouTunnel) initIPTables(p iptables.Protocol) error {
+func (t *FouTunnelController) initIPTables(p iptables.Protocol) error {
 	ipt, err := iptables.NewWithProtocol(p)
 	if err != nil {
 		return err
@@ -143,12 +161,12 @@ func (t *fouTunnel) initIPTables(p iptables.Protocol) error {
 	return nil
 }
 
-func (t *fouTunnel) IsInitialized() bool {
+func (t *FouTunnelController) IsInitialized() bool {
 	_, err := netlink.LinkByName(fouDummy)
 	return err == nil
 }
 
-func (t *fouTunnel) AddPeer(addr netip.Addr) (netlink.Link, error) {
+func (t *FouTunnelController) AddPeer(addr netip.Addr) (netlink.Link, error) {
 	if addr.Is4() {
 		return t.addPeer4(addr)
 	} else if addr.Is6() {
@@ -157,7 +175,7 @@ func (t *fouTunnel) AddPeer(addr netip.Addr) (netlink.Link, error) {
 	return nil, errors.New("unknown ip families")
 }
 
-func (t *fouTunnel) addPeer4(addr netip.Addr) (netlink.Link, error) {
+func (t *FouTunnelController) addPeer4(addr netip.Addr) (netlink.Link, error) {
 	if t.local4 == nil {
 		return nil, tunnel.ErrIPFamilyMismatch
 	}
@@ -187,9 +205,14 @@ func (t *fouTunnel) addPeer4(addr netip.Addr) (netlink.Link, error) {
 		return nil, fmt.Errorf("netlink: failed to add fou link: %w", err)
 	}
 
+	if err := setupFlowBasedIP4TunDevice(); err != nil {
+		return nil, fmt.Errorf("netlink: failed to setup ipip device: %w", err)
+	}
+
 	return link, nil
 }
-func (t *fouTunnel) addPeer6(addr netip.Addr) (netlink.Link, error) {
+
+func (t *FouTunnelController) addPeer6(addr netip.Addr) (netlink.Link, error) {
 
 }
 
@@ -223,7 +246,7 @@ func setupFlowBasedIP4TunDevice() error {
 
 	// Rename fallback device created by potential kernel module load after
 	// creating tunnel interface.
-	if err := renameDevice("tunl0", "coil_tunl"); err != nil {
+	if err := renameDevice("tunl0", "pona_tunl"); err != nil {
 		return fmt.Errorf("renaming fallback device %s: %w", "tunl0", err)
 	}
 
@@ -246,6 +269,61 @@ func setupFlowBasedIP6TunDevice() error {
 	// creating tunnel interface.
 	if err := renameDevice("ip6tnl0", "coil_ip6tnl"); err != nil {
 		return fmt.Errorf("renaming fallback device %s: %w", "tunl0", err)
+	}
+
+	return nil
+}
+
+// setupDevice creates and configures a device based on the given netlink attrs.
+func setupDevice(link netlink.Link) error {
+	name := link.Attrs().Name
+
+	// Reuse existing tunnel interface created by previous runs.
+	l, err := netlink.LinkByName(name)
+	if err != nil {
+		var linkNotFoundError netlink.LinkNotFoundError
+		if !errors.As(err, &linkNotFoundError) {
+			return err
+		}
+
+		if err := netlink.LinkAdd(link); err != nil {
+			return fmt.Errorf("netlink: failed to create device %s: %w", name, err)
+		}
+
+		// Fetch the link we've just created.
+		l, err = netlink.LinkByName(name)
+		if err != nil {
+			return fmt.Errorf("netlink: failed to retrieve created device %s: %w", name, err)
+		}
+	}
+
+	if err := configureDevice(l); err != nil {
+		return fmt.Errorf("failed to set up device %s: %w", l.Attrs().Name, err)
+	}
+
+	return nil
+}
+
+// configureDevice puts the given link into the up state
+func configureDevice(link netlink.Link) error {
+	ifName := link.Attrs().Name
+
+	if err := netlink.LinkSetUp(link); err != nil {
+		return fmt.Errorf("netlink: failed to set link %s up: %w", ifName, err)
+	}
+	return nil
+}
+
+// renameDevice renames a network device from and to a given value. Returns nil
+// if the device does not exist.
+func renameDevice(from, to string) error {
+	link, err := netlink.LinkByName(from)
+	if err != nil {
+		return nil
+	}
+
+	if err := netlink.LinkSetName(link, to); err != nil {
+		return fmt.Errorf("netlink: failed to rename device %s to %s: %w", from, to, err)
 	}
 
 	return nil

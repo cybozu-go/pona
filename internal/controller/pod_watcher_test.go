@@ -18,7 +18,7 @@ type mockTunnel struct {
 	tunnels map[netip.Addr]struct{}
 }
 
-var _ tunnel.Tunnel = &mockTunnel{}
+var _ tunnel.Controller = &mockTunnel{}
 
 func NewMockTunnel() mockTunnel {
 	return mockTunnel{
