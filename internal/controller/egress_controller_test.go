@@ -171,7 +171,7 @@ var _ = Describe("Egress Controller", func() {
 
 			Expect(egressContainer).NotTo(BeNil())
 			Expect(egressContainer.Image).To(Equal(controllerReconciler.DefaultImage))
-			Expect(egressContainer.Command).To(Equal(nil))
+			Expect(egressContainer.Command).To(BeNil())
 			Expect(egressContainer.Env).To(HaveLen(3))
 			Expect(egressContainer.VolumeMounts).To(HaveLen(2))
 			Expect(egressContainer.SecurityContext).NotTo(BeNil())
