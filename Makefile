@@ -6,6 +6,7 @@ IMG_GATEWAY ?= nat-gateway:$(IMG_TAG)
 ENVTEST_K8S_VERSION = 1.30.0
 
 SUDO ?= sudo
+PROTOC_OUTPUTS = pkg/cnirpc/cni.pb.go pkg/cnirpc/cni_grpc.pb.go docs/cni-grpc.md
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -54,6 +55,7 @@ manifests: controller-gen yq ## Generate WebhookConfiguration, ClusterRole and C
 
 .PHONY: generate
 generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
+	$(MAKE) $(PROTOC_OUTPUTS)
 	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./..."
 
 .PHONY: fmt
@@ -73,7 +75,9 @@ test: envtest manifests generate fmt vet mod ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
 .PHONY: check-generate
-check-generate: manifests generate fmt mod
+check-generate: manifests fmt mod
+	-rm $(ROLES) $(PROTOC_OUTPUTS)
+	$(MAKE) generate
 	git diff --exit-code --name-only
 
 # Utilize Kind or modify the e2e tests to load the image locally, enabling compatibility with other vendors.
@@ -174,6 +178,7 @@ GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
 YQ = $(LOCALBIN)/yq
 WGET_OPTIONS := --retry-on-http-error=503 --retry-connrefused --no-verbose
 WGET = wget $(WGET_OPTIONS)
+PROTOC := PATH=$(LOCALBIN):'$(PATH)' $(LOCALBIN)/protoc -I=$(PWD)/include:.
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.4.2
@@ -224,8 +229,8 @@ pkg/cnirpc/cni.pb.go: pkg/cnirpc/cni.proto
 pkg/cnirpc/cni_grpc.pb.go: pkg/cnirpc/cni.proto
 	$(PROTOC) --go-grpc_out=module=github.com/cybozu-go/pona:. $<
 
-../docs/cni-grpc.md: pkg/cnirpc/cni.proto
-	$(PROTOC) --doc_out=../docs --doc_opt=markdown,$@ $<
+docs/cni-grpc.md: pkg/cnirpc/cni.proto
+	$(PROTOC) --doc_out=docs --doc_opt=markdown,$@ $<
 
 .PHONY: yq
 yq: $(YQ)

@@ -3,7 +3,7 @@ package pkg.cnirpc;
 
 import "google/protobuf/empty.proto";
 
-option go_package = "github.com/cybozu-go/coil/v2/pkg/cnirpc";
+option go_package = "github.com/cybozu-go/pona/pkg/cnirpc";
 
 // CNIArgs is a mirror of cni.pkg.skel.CmdArgs struct.
 // https://pkg.go.dev/github.com/containernetworking/cni@v0.8.0/pkg/skel?tab=doc#CmdArgs
