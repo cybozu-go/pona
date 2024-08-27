@@ -2,12 +2,14 @@ package ponad
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/netip"
 	"strings"
 
+	ponav1beta1 "github.com/cybozu-go/pona/api/v1beta1"
 	"github.com/cybozu-go/pona/internal/constants"
 	"github.com/cybozu-go/pona/pkg/cnirpc"
 	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/logging"
@@ -102,6 +104,13 @@ func (s *server) Add(ctx context.Context, args *cnirpc.CNIArgs) (*cnirpc.AddResp
 		return nil, nil
 	}
 
+	for _, egName := range egNames {
+		g, ds, err := s.collectDestinationsForEgress(ctx, egName)
+		if err != nil {
+			return nil, newInternalError(err, "failed to collect destinations for egress")
+		}
+
+	}
 }
 
 func (s *server) listEgress(pod *corev1.Pod) ([]client.ObjectKey, error) {
@@ -130,54 +139,55 @@ type gateway netip.Addr
 type destination netip.Prefix
 type gwToDests map[gateway][]destination
 
-func (s *server) collectDestinationsForEgress(ctx context.Context, egName client.ObjectKey) (*gateway, []destination, error) {
-	eg := &ponav1.Egress{}
+func (s *server) collectDestinationsForEgress(ctx context.Context, egName client.ObjectKey) (gateway, []destination, error) {
+	eg := &ponav1beta1.Egress{}
 	svc := &corev1.Service{}
 
 	if err := s.apiReader.Get(ctx, egName, eg); err != nil {
-		return nil, nil, newError(codes.FailedPrecondition, cnirpc.ErrorCode_INTERNAL,
-			"failed to get Egress "+egName.Name, err.Error())
-	}
-	if err := s.client.Get(ctx, n, svc); err != nil {
-		return nil, newError(codes.FailedPrecondition, cnirpc.ErrorCode_INTERNAL,
-			"failed to get Service "+n.String(), err.Error())
+		return gateway{}, nil, newError(codes.FailedPrecondition, cnirpc.ErrorCode_INTERNAL,
+			"failed to get Egress "+egName.String(), err.Error())
 	}
 
-	// coil doesn't support dual stack services for now, although it's stable from k8s 1.23
-	// https://kubernetes.io/docs/concepts/services-networking/dual-stack/
-	svcIP := net.ParseIP(svc.Spec.ClusterIP)
-	if svcIP == nil {
-		return nil, newError(codes.Internal, cnirpc.ErrorCode_INTERNAL,
-			"invalid ClusterIP in Service "+n.String(), svc.Spec.ClusterIP)
+	if err := s.apiReader.Get(ctx, egName, svc); err != nil {
+		return gateway{}, nil, newError(codes.FailedPrecondition, cnirpc.ErrorCode_INTERNAL,
+			"failed to get Service "+egName.String(), err.Error())
 	}
-	var subnets []*net.IPNet
-	if ip4 := svcIP.To4(); ip4 != nil {
-		svcIP = ip4
+
+	// pona doesn't support dual stack services for now, although it's stable from k8s 1.23
+	// https://kubernetes.io/docs/concepts/services-networking/dual-stack/
+	svcIP, err := netip.ParseAddr(svc.Spec.ClusterIP)
+	if err != nil {
+		return gateway{}, nil, newError(codes.Internal, cnirpc.ErrorCode_INTERNAL,
+			"invalid ClusterIP in Service "+egName.String(), svc.Spec.ClusterIP)
+	}
+
+	var subnets []destination
+	if svcIP.Is4() {
 		for _, sn := range eg.Spec.Destinations {
-			_, subnet, err := net.ParseCIDR(sn)
+			prefix, err := netip.ParsePrefix(sn)
 			if err != nil {
-				return nil, newInternalError(err, "invalid network in Egress "+n.String())
+				return gateway{}, nil, newInternalError(err, "invalid network in Egress "+egName.String())
 			}
-			if subnet.IP.To4() != nil {
-				subnets = append(subnets, subnet)
+
+			if prefix.Addr().Is4() {
+				subnets = append(subnets, destination(prefix))
+			}
+		}
+	} else if svcIP.Is6() {
+		for _, sn := range eg.Spec.Destinations {
+			prefix, err := netip.ParsePrefix(sn)
+			if err != nil {
+				return gateway{}, nil, newInternalError(err, "invalid network in Egress "+egName.String())
+			}
+
+			if prefix.Addr().Is6() {
+				subnets = append(subnets, destination(prefix))
 			}
 		}
 	} else {
-		for _, sn := range eg.Spec.Destinations {
-			_, subnet, err := net.ParseCIDR(sn)
-			if err != nil {
-				return nil, newInternalError(err, "invalid network in Egress "+n.String())
-			}
-			if subnet.IP.To4() == nil {
-				subnets = append(subnets, subnet)
-			}
-		}
+		return gateway{}, []destination{}, errors.New("invalid service ip")
 	}
-
-	if len(subnets) > 0 {
-		gwlist = append(gwlist, GWNets{Gateway: svcIP, Networks: subnets, SportAuto: eg.Spec.FouSourcePortAuto})
-	}
-
+	return gateway(svcIP), subnets, nil
 }
 
 func (s *server) Del(ctx context.Context, args *cnirpc.CNIArgs) (*emptypb.Empty, error) {
