@@ -1,16 +1,20 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"log/slog"
+	"net"
 	"os"
+	"time"
 
 	"github.com/cybozu-go/pona/internal/ponad"
-	"github.com/cybozu-go/pona/pkg/cnirpc"
-	"github.com/cybozu-go/pona/pkg/tunnel/fou"
-	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/logging"
-	"google.golang.org/grpc"
+	"github.com/go-logr/logr"
+	"k8s.io/apimachinery/pkg/runtime"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/healthz"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 )
 
 type Config struct {
@@ -22,12 +26,19 @@ type Config struct {
 
 const defaultSocketPath = "/run/ponad.sock"
 
-// InterceptorLogger adapts slog logger to interceptor logger.
-// This code is simple enough to be copied and not imported.
-func InterceptorLogger(l *slog.Logger) logging.Logger {
-	return logging.LoggerFunc(func(ctx context.Context, lvl logging.Level, msg string, fields ...any) {
-		l.Log(ctx, slog.Level(lvl), msg, fields...)
-	})
+const (
+	gracefulTimeout = 20 * time.Second
+)
+
+var (
+	scheme   = runtime.NewScheme()
+	setupLog = ctrl.Log.WithName("setup")
+)
+
+func init() {
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+
+	// +kubebuilder:scaffold:scheme
 }
 
 func main() {
@@ -40,20 +51,58 @@ func main() {
 
 	flag.Parse()
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	slog.SetDefault(logger)
+	ctrl.SetLogger(logr.FromSlogHandler(logger.Handler()))
 
-	fc, err := fou.NewFoUTunnelController(config.egressPort, ipv4, ipv6)
+	mgr, err := setupManager(config)
 	if err != nil {
-		logger.Error("failed to generate FoU Tunnel Controller", slog.Any("error", err))
-		os.Exit(1)
-	}
-	if err := fc.Init(); err != nil {
-		logger.Error("failed to initialize FoU Tunnel Controller", slog.Any("error", err))
+		setupLog.Error(err, "failed to setup manager")
 		os.Exit(1)
 	}
 
-	s := ponad.NewServer(fc)
-	server := grpc.NewServer(grpc.ChainUnaryInterceptor(
-		logging.UnaryServerInterceptor(InterceptorLogger(logger)),
-	))
-	cnirpc.RegisterCNIServer(server, s)
+	if err := startPonad(config, mgr); err != nil {
+		setupLog.Error(err, "failed to start ponad")
+		os.Exit(1)
+	}
+}
+
+func setupManager(config Config) (ctrl.Manager, error) {
+	timeout := gracefulTimeout
+	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+		Scheme:         scheme,
+		LeaderElection: false,
+		Metrics: metricsserver.Options{
+			BindAddress: config.metricsAddr,
+		},
+		GracefulShutdownTimeout: &timeout,
+		HealthProbeBindAddress:  config.healthAddr,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if err := mgr.AddHealthzCheck("ping", healthz.Ping); err != nil {
+		return nil, err
+	}
+	if err := mgr.AddReadyzCheck("ping", healthz.Ping); err != nil {
+		return nil, err
+	}
+	return mgr, nil
+}
+
+func startPonad(config Config, mgr ctrl.Manager) error {
+	l, err := net.Listen("unix", config.socketPath)
+	if err != nil {
+		return err
+	}
+
+	s := ponad.NewServer(l, mgr.GetAPIReader())
+	if err := mgr.Add(s); err != nil {
+		return err
+	}
+
+	ctx := ctrl.SetupSignalHandler()
+	slog.Info("starting manager")
+
+	return mgr.Start(ctx)
 }
