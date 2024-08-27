@@ -108,7 +108,7 @@ var _ = Describe("Egress Controller", func() {
 				Scheme: k8sClient.Scheme(),
 
 				Port:         port,
-				DefaultImage: "invalid-image",
+				DefaultImage: "test-image",
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
