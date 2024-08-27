@@ -181,9 +181,17 @@ func main() {
 		setupLog.Error(err, "unable to create FouTunnelController")
 		os.Exit(1)
 	}
+	if err := fc.Init(); err != nil {
+		setupLog.Error(err, "failed to Initialize FoUTunnelController")
+		os.Exit(1)
+	}
 	nc, err := nat.NewController("eth0", ipv4, ipv6)
 	if err != nil {
 		setupLog.Error(err, "unable to create nat.Controller")
+		os.Exit(1)
+	}
+	if err := nc.Init(); err != nil {
+		setupLog.Error(err, "failed to Initialize nat.Controller")
 		os.Exit(1)
 	}
 

@@ -20,7 +20,9 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o na
 
 FROM ghcr.io/cybozu/ubuntu:22.04
 WORKDIR /
+RUN apt-get -yy update && apt-get install -yy netbase kmod iptables iproute2
+
 COPY --from=builder /workspace/nat-gateway .
-USER 65532:65532
+USER 0:0
 
 ENTRYPOINT ["/nat-gateway"]
