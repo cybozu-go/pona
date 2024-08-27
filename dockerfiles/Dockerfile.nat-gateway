@@ -1,0 +1,31 @@
+# Build the manager binary
+FROM ghcr.io/cybozu/golang:1.22-jammy AS builder
+ARG TARGETOS
+ARG TARGETARCH
+
+WORKDIR /workspace
+# Copy the Go Modules manifests
+COPY go.mod go.mod
+COPY go.sum go.sum
+# cache deps before building and copying source so that we don't need to re-download as much
+# and so that source changes don't invalidate our downloaded layer
+RUN go mod download
+
+# Copy the go source
+COPY cmd/nat-gateway/main.go cmd/nat-gateway/main.go
+COPY api/ api/
+COPY internal/ internal/
+
+RUN --mount=type=cache,target=/go/pkg/mod/ \
+    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o nat-gateway cmd/nat-gateway/main.go
+
+FROM ghcr.io/cybozu/ubuntu:22.04
+WORKDIR /
+RUN --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    apt-get -yy update && apt-get install -yy netbase kmod iptables iproute2
+
+COPY --from=builder /workspace/nat-gateway .
+USER 0:0
+
+ENTRYPOINT ["/nat-gateway"]

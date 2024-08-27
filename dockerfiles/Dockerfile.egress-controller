@@ -14,9 +14,10 @@ RUN go mod download
 # Copy the go source
 COPY cmd/egress-controller/main.go cmd/egress-controller/main.go
 COPY api/ api/
-COPY internal/controller/ internal/controller/
+COPY internal/ internal/
 
-RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o egress-controller cmd/egress-controller/main.go
+RUN --mount=type=cache,target=/go/pkg/mod/ \
+    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o egress-controller cmd/egress-controller/main.go
 
 FROM ghcr.io/cybozu/ubuntu:22.04
 WORKDIR /

@@ -61,7 +61,8 @@ spec:
       - args:
           - --leader-elect
           - --health-probe-bind-address=:8081
-        image: controller:latest
+          - --natgateway-image=nat-gateway:dev # to be changed
+        image: egress-controller:dev
         imagePullPolicy: IfNotPresent
         name: manager
         securityContext:
