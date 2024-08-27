@@ -5,45 +5,13 @@ import (
 	"net/netip"
 	"path/filepath"
 
-	"github.com/cybozu-go/pona/internal/tunnel"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"github.com/vishvananda/netlink"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
-
-type mockTunnel struct {
-	tunnels map[netip.Addr]struct{}
-}
-
-var _ tunnel.Controller = &mockTunnel{}
-
-func NewMockTunnel() mockTunnel {
-	return mockTunnel{
-		tunnels: make(map[netip.Addr]struct{}),
-	}
-}
-
-func (m mockTunnel) AddPeer(addr netip.Addr) (netlink.Link, error) {
-	m.tunnels[addr] = struct{}{}
-	return nil, nil
-}
-
-func (m mockTunnel) DelPeer(addr netip.Addr) error {
-	delete(m.tunnels, addr)
-	return nil
-}
-
-func (m mockTunnel) Init() error {
-	return nil
-}
-
-func (m mockTunnel) IsInitialized() bool {
-	return true
-}
 
 type pod struct {
 	NamespacedName types.NamespacedName
@@ -105,10 +73,12 @@ var _ = Describe("Pod Watcher", func() {
 		It("should successfully reconcile the resource", func() {
 			By("Reconcile the created resource")
 			t := NewMockTunnel()
+			n := NewMockNat()
 			w := &PodWatcher{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
 				tun:    t,
+				nat:    n,
 
 				EgressName:      egressName,
 				EgressNamespace: egressNamespace,
@@ -122,9 +92,15 @@ var _ = Describe("Pod Watcher", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Check if Add() is called")
+			By("Check if mockTunnel.AddPeer() is called")
 			for _, ip := range podInfo.PodIPs {
 				_, ok := t.tunnels[ip]
+				Expect(ok).To(BeTrue())
+			}
+
+			By("Check if mockNAT.AddClient() is called")
+			for _, ip := range podInfo.PodIPs {
+				_, ok := n.clients[ip]
 				Expect(ok).To(BeTrue())
 			}
 
@@ -145,7 +121,7 @@ var _ = Describe("Pod Watcher", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Check if Delete() is called")
+			By("Check if mockTunnel.DelPeer() is called")
 			for _, ip := range podInfo.PodIPs {
 				_, ok := t.tunnels[ip]
 				Expect(ok).To(BeFalse())
