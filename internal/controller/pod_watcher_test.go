@@ -5,9 +5,12 @@ import (
 	"net/netip"
 	"path/filepath"
 
+	natmock "github.com/cybozu-go/pona/internal/nat/mock"
+	tunnelmock "github.com/cybozu-go/pona/internal/tunnel/mock"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -72,8 +75,8 @@ var _ = Describe("Pod Watcher", func() {
 
 		It("should successfully reconcile the resource", func() {
 			By("Reconcile the created resource")
-			t := NewMockTunnel()
-			n := NewMockNat()
+			t := tunnelmock.NewMockTunnel()
+			n := natmock.NewMockNat()
 			w := &PodWatcher{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
@@ -94,13 +97,13 @@ var _ = Describe("Pod Watcher", func() {
 
 			By("Check if mockTunnel.AddPeer() is called")
 			for _, ip := range podInfo.PodIPs {
-				_, ok := t.tunnels[ip]
+				_, ok := t.Tunnels[ip]
 				Expect(ok).To(BeTrue())
 			}
 
 			By("Check if mockNAT.AddClient() is called")
 			for _, ip := range podInfo.PodIPs {
-				_, ok := n.clients[ip]
+				_, ok := n.Clients[ip]
 				Expect(ok).To(BeTrue())
 			}
 
@@ -123,7 +126,7 @@ var _ = Describe("Pod Watcher", func() {
 
 			By("Check if mockTunnel.DelPeer() is called")
 			for _, ip := range podInfo.PodIPs {
-				_, ok := t.tunnels[ip]
+				_, ok := t.Tunnels[ip]
 				Expect(ok).To(BeFalse())
 			}
 

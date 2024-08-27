@@ -59,8 +59,6 @@ type FouTunnelController struct {
 	local6 *netip.Addr
 }
 
-var _ tunnel.Controller = &FouTunnelController{}
-
 // NewFoUTunnel creates a new fouTunnel.
 // port is the UDP port to receive FoU packets.
 // localIPv4 is the local IPv4 address of the IPIP tunnel.  This can be nil.
