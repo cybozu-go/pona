@@ -50,7 +50,7 @@ type EgressSpec struct {
 	// +optional
 	SessionAffinityConfig *corev1.SessionAffinityConfig `json:"sessionAffinityConfig,omitempty"`
 
-	// PodDisruptionBudget is an optional PodDisruptionBudget for Egress NAT pods.
+	// PodDisruptionBudget is an optional PodDisruptionBudget for Egress NAT Gateways.
 	// +optional
 	PodDisruptionBudget *EgressPDBSpec `json:"podDisruptionBudget,omitempty"`
 }

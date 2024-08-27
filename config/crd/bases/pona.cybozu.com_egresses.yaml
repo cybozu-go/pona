@@ -48,7 +48,7 @@ spec:
                   minItems: 1
                   type: array
                 podDisruptionBudget:
-                  description: PodDisruptionBudget is an optional PodDisruptionBudget for Egress NAT pods.
+                  description: PodDisruptionBudget is an optional PodDisruptionBudget for Egress NAT Gateways.
                   properties:
                     maxUnavailable:
                       anyOf:
