@@ -1,5 +1,7 @@
 # Image URL to use all building/pushing image targets
-IMG ?= controller:latest
+IMG_TAG ?= dev
+IMG_CONTROLLER ?= egress-controller:$(IMG_TAG)
+IMG_GATEWAY ?= nat-gateway:$(IMG_TAG)
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
 ENVTEST_K8S_VERSION = 1.30.0
 
@@ -100,11 +102,14 @@ run: manifests generate fmt vet mod ## Run a controller from your host.
 # More info: https://docs.docker.com/develop/develop-images/build_enhancements/
 .PHONY: docker-build
 docker-build: ## Build docker image with the manager.
-	$(CONTAINER_TOOL) build -t ${IMG} .
+	IMG_NAME 
+	$(CONTAINER_TOOL) build -t ${IMG_CONTROLLER} -f ./dockerfiles/Dockerfile.egress-controller .
+	$(CONTAINER_TOOL) build -t ${IMG_GATEWAY} -f ./dockerfiles/Dockerfile.nat-gateway .
 
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
-	$(CONTAINER_TOOL) push ${IMG}
+	$(CONTAINER_TOOL) push ${IMG_CONTROLLER}
+	$(CONTAINER_TOOL) push ${IMG_GATEWAY}
 
 # PLATFORMS defines the target platforms for the manager image be built to provide support to multiple
 # architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:
