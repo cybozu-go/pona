@@ -5,6 +5,8 @@ IMG_GATEWAY ?= nat-gateway:$(IMG_TAG)
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
 ENVTEST_K8S_VERSION = 1.30.0
 
+SUDO ?= sudo
+
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
 GOBIN=$(shell go env GOPATH)/bin
@@ -179,6 +181,10 @@ CONTROLLER_TOOLS_VERSION ?= v0.15.0
 ENVTEST_VERSION ?= release-0.18
 GOLANGCI_LINT_VERSION ?= v1.59.1
 YQ_VERSION ?= 4.44.3
+PROTOC_VERSION=27.3
+PROTOC_GEN_GO_VERSION := $(shell awk '/google.golang.org\/protobuf/ {print substr($$2, 2)}' go.mod)
+PROTOC_GEN_GO_GRPC_VERSON=1.5.1
+PROTOC_GEN_DOC_VERSION=1.5.1
 
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
@@ -200,6 +206,26 @@ golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
 $(GOLANGCI_LINT): $(LOCALBIN)
 	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
 
+.PHONY: setup
+setup:
+	$(SUDO) apt-get update
+	$(SUDO) apt-get -y install --no-install-recommends unzip
+
+	curl -sfL -o protoc.zip https://github.com/protocolbuffers/protobuf/releases/download/v$(PROTOC_VERSION)/protoc-$(PROTOC_VERSION)-linux-x86_64.zip
+	unzip -o protoc.zip bin/protoc 'include/*'
+	rm -f protoc.zip
+	go install google.golang.org/protobuf/cmd/protoc-gen-go@v$(PROTOC_GEN_GO_VERSION)
+	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v$(PROTOC_GEN_GO_GRPC_VERSON)
+	go install github.com/pseudomuto/protoc-gen-doc/cmd/protoc-gen-doc@v$(PROTOC_GEN_DOC_VERSION)
+
+pkg/cnirpc/cni.pb.go: pkg/cnirpc/cni.proto
+	$(PROTOC) --go_out=module=github.com/cybozu-go/pona:. $<
+
+pkg/cnirpc/cni_grpc.pb.go: pkg/cnirpc/cni.proto
+	$(PROTOC) --go-grpc_out=module=github.com/cybozu-go/pona:. $<
+
+../docs/cni-grpc.md: pkg/cnirpc/cni.proto
+	$(PROTOC) --doc_out=../docs --doc_opt=markdown,$@ $<
 
 .PHONY: yq
 yq: $(YQ)
