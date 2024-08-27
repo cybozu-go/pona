@@ -107,7 +107,8 @@ var _ = Describe("Egress Controller", func() {
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
 
-				Port: port,
+				Port:         port,
+				DefaultImage: "invalid-image",
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
@@ -169,7 +170,7 @@ var _ = Describe("Egress Controller", func() {
 			egressContainer := dep.Spec.Template.Spec.Containers[0]
 
 			Expect(egressContainer).NotTo(BeNil())
-			Expect(egressContainer.Image).To(Equal(egressImage))
+			Expect(egressContainer.Image).To(Equal(controllerReconciler.DefaultImage))
 			Expect(egressContainer.Command).To(Equal([]string{"coil-egress"})) //TODO: Change this when use another container image
 			Expect(egressContainer.Env).To(HaveLen(3))
 			Expect(egressContainer.VolumeMounts).To(HaveLen(2))

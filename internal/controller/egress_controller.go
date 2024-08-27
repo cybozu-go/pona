@@ -30,7 +30,6 @@ const (
 )
 
 const (
-	egressImage              = "ghcr.io/cybozu-go/coil:2.7.2"
 	egressDefaultCpuRequest  = "100m"
 	egressDefaultMemRequest  = "200Mi"
 	egressServiceAccountName = "egress"
@@ -52,7 +51,8 @@ type EgressReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 
-	Port int32
+	Port         int32
+	DefaultImage string
 }
 
 // +kubebuilder:rbac:groups=pona.cybozu.com,resources=egresses,verbs=get;list;watch;create;update;patch;delete
@@ -469,16 +469,10 @@ func (r *EgressReconciler) reconcilePodTemplate(eg *ponav1beta1.Egress, deploy *
 	}
 	egressContainer.Name = "egress"
 
-	//TODO: Change image name and others from coil
 	if egressContainer.Image == "" {
-		egressContainer.Image = egressImage
+		egressContainer.Image = r.DefaultImage
 	}
-	if len(egressContainer.Command) == 0 {
-		egressContainer.Command = []string{"coil-egress"}
-	}
-	if len(egressContainer.Args) == 0 {
-		egressContainer.Args = []string{"--zap-stacktrace-level=panic"}
-	}
+
 	egressContainer.Env = append(egressContainer.Env,
 		corev1.EnvVar{
 			Name:  EnvPodNamespace,

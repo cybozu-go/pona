@@ -14,7 +14,7 @@ RUN go mod download
 # Copy the go source
 COPY cmd/nat-gateway/main.go cmd/nat-gateway/main.go
 COPY api/ api/
-COPY internal/controller/ internal/controller/
+COPY internal/ internal/
 
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o nat-gateway cmd/nat-gateway/main.go
 

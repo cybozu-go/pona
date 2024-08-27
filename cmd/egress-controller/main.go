@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/tls"
 	"flag"
+	"fmt"
 	"os"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -37,7 +38,8 @@ func init() {
 }
 
 type Config struct {
-	FoUPort int
+	FoUPort         int
+	NatGatewayImage string
 }
 
 func main() {
@@ -61,12 +63,18 @@ func main() {
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 	flag.IntVar(&config.FoUPort, "fou-port", 5555, "port number for foo-over-udp tunnels")
+	flag.StringVar(&config.NatGatewayImage, "natgateway-image", "", "default image name for nat-gateway pods")
 
 	opts := zap.Options{
 		Development: true,
 	}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
+
+	if config.NatGatewayImage == "" {
+		setupLog.Error(fmt.Errorf("--natgateway-image is required"), "failed to parse flags")
+		os.Exit(1)
+	}
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
@@ -138,9 +146,10 @@ func main() {
 	}
 
 	if err = (&controller.EgressReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-		Port:   int32(config.FoUPort),
+		Client:       mgr.GetClient(),
+		Scheme:       mgr.GetScheme(),
+		Port:         int32(config.FoUPort),
+		DefaultImage: config.NatGatewayImage,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Egress")
 		os.Exit(1)
