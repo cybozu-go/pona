@@ -139,8 +139,11 @@ func (t *FouTunnelController) Init() error {
 
 	attrs := netlink.NewLinkAttrs()
 	attrs.Name = fouDummy
-	return netlink.LinkAdd(&netlink.Dummy{LinkAttrs: attrs})
 
+	if err := netlink.LinkAdd(&netlink.Dummy{LinkAttrs: attrs}); err != nil {
+		return fmt.Errorf("failed to add dummy device: %w", err)
+	}
+	return nil
 }
 
 func (t *FouTunnelController) initIPTables(p iptables.Protocol) error {

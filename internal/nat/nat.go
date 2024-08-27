@@ -15,7 +15,7 @@ const (
 	egressProtocolID = 30
 	egressRulePrio   = 2000
 
-	egressDummy = "pona-egress-dummy"
+	egressDummy = "nat-dummy"
 )
 
 type Controller interface {
@@ -100,7 +100,11 @@ func (c *controller) Init() error {
 
 	attrs := netlink.NewLinkAttrs()
 	attrs.Name = egressDummy
-	return netlink.LinkAdd(&netlink.Dummy{LinkAttrs: attrs})
+
+	if err := netlink.LinkAdd(&netlink.Dummy{LinkAttrs: attrs}); err != nil {
+		return fmt.Errorf("failed to add dummy device: %w", err)
+	}
+	return nil
 }
 
 func (c *controller) AddClient(addr netip.Addr, link netlink.Link) error {
