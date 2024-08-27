@@ -9,8 +9,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/cybozu-go/pona/internal/nat"
-	"github.com/cybozu-go/pona/internal/tunnel"
+	"github.com/cybozu-go/pona/pkg/nat"
+	"github.com/cybozu-go/pona/pkg/tunnel"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"

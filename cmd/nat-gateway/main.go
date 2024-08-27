@@ -24,8 +24,8 @@ import (
 
 	ponav1beta1 "github.com/cybozu-go/pona/api/v1beta1"
 	"github.com/cybozu-go/pona/internal/controller"
-	"github.com/cybozu-go/pona/internal/nat"
-	"github.com/cybozu-go/pona/internal/tunnel/fou"
+	"github.com/cybozu-go/pona/pkg/nat"
+	"github.com/cybozu-go/pona/pkg/tunnel/fou"
 	// +kubebuilder:scaffold:imports
 )
 

@@ -5,8 +5,8 @@ import (
 	"net/netip"
 	"path/filepath"
 
-	natmock "github.com/cybozu-go/pona/internal/nat/mock"
-	tunnelmock "github.com/cybozu-go/pona/internal/tunnel/mock"
+	natmock "github.com/cybozu-go/pona/pkg/nat/mock"
+	tunnelmock "github.com/cybozu-go/pona/pkg/tunnel/mock"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"

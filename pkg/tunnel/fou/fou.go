@@ -11,8 +11,8 @@ import (
 	"github.com/containernetworking/plugins/pkg/ip"
 	"github.com/containernetworking/plugins/pkg/utils/sysctl"
 	"github.com/coreos/go-iptables/iptables"
-	"github.com/cybozu-go/pona/internal/tunnel"
-	"github.com/cybozu-go/pona/internal/util/netiputil"
+	"github.com/cybozu-go/pona/pkg/tunnel"
+	"github.com/cybozu-go/pona/pkg/util/netiputil"
 	"github.com/vishvananda/netlink"
 )
 

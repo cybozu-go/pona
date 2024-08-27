@@ -6,7 +6,7 @@ import (
 	"net/netip"
 
 	"github.com/coreos/go-iptables/iptables"
-	"github.com/cybozu-go/pona/internal/util/netiputil"
+	"github.com/cybozu-go/pona/pkg/util/netiputil"
 	"github.com/vishvananda/netlink"
 )
 
