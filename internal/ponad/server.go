@@ -2,6 +2,7 @@ package ponad
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -154,8 +155,17 @@ func (s *server) Add(ctx context.Context, args *cnirpc.CNIArgs) (*cnirpc.AddResp
 		if err != nil {
 			return nil, newInternalError(err, fmt.Sprintf("failed to add peer for %v", g))
 		}
-		nt.UpdateRoutes(link, []netip.Addr(ds))
+		if err := nt.UpdateRoutes(link, ds); err != nil {
+			return nil, newInternalError(err, "failed to update routes")
+		}
 	}
+
+	b, err := json.Marshal(p)
+	if err != nil {
+		return nil, newInternalError(err, "failed to marshal result")
+	}
+
+	return &cnirpc.AddResponse{Result: b}, nil
 }
 
 func (s *server) listEgress(pod *corev1.Pod) ([]client.ObjectKey, error) {
@@ -180,19 +190,17 @@ func (s *server) listEgress(pod *corev1.Pod) ([]client.ObjectKey, error) {
 	return egNames, nil
 }
 
-type gwToDests map[netip.Addr][]netip.Prefix
-
-func (s *server) collectDestinationsForEgress(ctx context.Context, egName client.ObjectKey) (gateway, []destination, error) {
+func (s *server) collectDestinationsForEgress(ctx context.Context, egName client.ObjectKey) (netip.Addr, []netip.Prefix, error) {
 	eg := &ponav1beta1.Egress{}
 	svc := &corev1.Service{}
 
 	if err := s.apiReader.Get(ctx, egName, eg); err != nil {
-		return gateway{}, nil, newError(codes.FailedPrecondition, cnirpc.ErrorCode_INTERNAL,
+		return netip.Addr{}, nil, newError(codes.FailedPrecondition, cnirpc.ErrorCode_INTERNAL,
 			"failed to get Egress "+egName.String(), err.Error())
 	}
 
 	if err := s.apiReader.Get(ctx, egName, svc); err != nil {
-		return gateway{}, nil, newError(codes.FailedPrecondition, cnirpc.ErrorCode_INTERNAL,
+		return netip.Addr{}, nil, newError(codes.FailedPrecondition, cnirpc.ErrorCode_INTERNAL,
 			"failed to get Service "+egName.String(), err.Error())
 	}
 
@@ -200,43 +208,43 @@ func (s *server) collectDestinationsForEgress(ctx context.Context, egName client
 	// https://kubernetes.io/docs/concepts/services-networking/dual-stack/
 	svcIP, err := netip.ParseAddr(svc.Spec.ClusterIP)
 	if err != nil {
-		return gateway{}, nil, newError(codes.Internal, cnirpc.ErrorCode_INTERNAL,
+		return netip.Addr{}, nil, newError(codes.Internal, cnirpc.ErrorCode_INTERNAL,
 			"invalid ClusterIP in Service "+egName.String(), svc.Spec.ClusterIP)
 	}
 
-	var subnets []destination
+	var subnets []netip.Prefix
 	if svcIP.Is4() {
 		for _, sn := range eg.Spec.Destinations {
 			prefix, err := netip.ParsePrefix(sn)
 			if err != nil {
-				return gateway{}, nil, newInternalError(err, "invalid network in Egress "+egName.String())
+				return netip.Addr{}, nil, newInternalError(err, "invalid network in Egress "+egName.String())
 			}
 
 			if prefix.Addr().Is4() {
-				subnets = append(subnets, destination(prefix))
+				subnets = append(subnets, prefix)
 			}
 		}
 	} else if svcIP.Is6() {
 		for _, sn := range eg.Spec.Destinations {
 			prefix, err := netip.ParsePrefix(sn)
 			if err != nil {
-				return gateway{}, nil, newInternalError(err, "invalid network in Egress "+egName.String())
+				return netip.Addr{}, nil, newInternalError(err, "invalid network in Egress "+egName.String())
 			}
 
 			if prefix.Addr().Is6() {
-				subnets = append(subnets, destination(prefix))
+				subnets = append(subnets, prefix)
 			}
 		}
 	} else {
-		return gateway{}, []destination{}, errors.New("invalid service ip")
+		return netip.Addr{}, []netip.Prefix{}, errors.New("invalid service ip")
 	}
-	return gateway(svcIP), subnets, nil
+	return svcIP, subnets, nil
 }
 
 func (s *server) Del(ctx context.Context, args *cnirpc.CNIArgs) (*emptypb.Empty, error) {
-
+	return nil, nil
 }
 
 func (s *server) Check(ctx context.Context, args *cnirpc.CNIArgs) (*emptypb.Empty, error) {
-
+	return nil, nil
 }
