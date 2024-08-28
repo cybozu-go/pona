@@ -35,12 +35,12 @@ type PodWatcher struct {
 	podIPToPod  map[netip.Addr]Set[types.NamespacedName]
 
 	tun tunnel.Controller
-	nat nat.Controller
+	nat nat.Gateway
 }
 
 type Set[T comparable] map[T]struct{}
 
-func NewPodWatcher(client client.Client, scheme *runtime.Scheme, egressName, egressNamespace string, t tunnel.Controller, n nat.Controller) *PodWatcher {
+func NewPodWatcher(client client.Client, scheme *runtime.Scheme, egressName, egressNamespace string, t tunnel.Controller, n nat.Gateway) *PodWatcher {
 	return &PodWatcher{
 		Client:          client,
 		Scheme:          scheme,

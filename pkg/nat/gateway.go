@@ -18,12 +18,12 @@ const (
 	egressDummy = "nat-dummy"
 )
 
-type Controller interface {
+type Gateway interface {
 	Init() error
 	AddClient(netip.Addr, netlink.Link) error
 }
 
-type controller struct {
+type gateway struct {
 	iface string
 	ipv4  *netip.Addr
 	ipv6  *netip.Addr
@@ -31,7 +31,7 @@ type controller struct {
 
 var ErrIPFamilyMismatch = errors.New("no matching IP family")
 
-func NewController(iface string, ipv4, ipv6 *netip.Addr) (Controller, error) {
+func NewGateway(iface string, ipv4, ipv6 *netip.Addr) (Gateway, error) {
 	if ipv4 != nil && !ipv4.Is4() {
 		return nil, fmt.Errorf("invalid IPv4 address, ip=%s", ipv4.String())
 	}
@@ -39,14 +39,14 @@ func NewController(iface string, ipv4, ipv6 *netip.Addr) (Controller, error) {
 		return nil, fmt.Errorf("invalid IPv6 address, ip=%s", ipv6.String())
 	}
 
-	return &controller{
+	return &gateway{
 		iface: iface,
 		ipv4:  ipv4,
 		ipv6:  ipv6,
 	}, nil
 }
 
-func (c *controller) newRule(family int) *netlink.Rule {
+func (c *gateway) newRule(family int) *netlink.Rule {
 	r := netlink.NewRule()
 	r.Family = family
 	r.IifName = c.iface
@@ -55,7 +55,7 @@ func (c *controller) newRule(family int) *netlink.Rule {
 	return r
 }
 
-func (c *controller) Init() error {
+func (c *gateway) Init() error {
 	// avoid double initialization in case the program restarts
 	_, err := netlink.LinkByName(egressDummy)
 	if err == nil {
@@ -107,7 +107,7 @@ func (c *controller) Init() error {
 	return nil
 }
 
-func (c *controller) AddClient(addr netip.Addr, link netlink.Link) error {
+func (c *gateway) AddClient(addr netip.Addr, link netlink.Link) error {
 	// Note:
 	// The following checks are not necessary in fact because,
 	// prior to this point, the support for the IP family is tested

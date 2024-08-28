@@ -70,6 +70,9 @@ func NewFoUTunnelController(port int, localIPv4, localIPv6 *netip.Addr) (*FouTun
 	if localIPv6 != nil && !localIPv6.Is6() {
 		return nil, tunnel.ErrIPFamilyMismatch
 	}
+	if localIPv4 == nil && localIPv6 == nil {
+		return nil, tunnel.ErrNoIPProvided
+	}
 	return &FouTunnelController{
 		port:   port,
 		local4: localIPv4,

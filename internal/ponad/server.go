@@ -120,20 +120,28 @@ func (s *server) Add(ctx context.Context, args *cnirpc.CNIArgs) (*cnirpc.AddResp
 			return nil, newInternalError(err, "failed to collect destinations for egress")
 		}
 
-		var clientIP netip.Addr
+		var local4, local6 *netip.Addr
 		for _, ipc := range p.IPs {
 			ip, ok := netiputil.ToAddr(ipc.Gateway)
 			if !ok {
 				return nil, newInternalError(errors.New("failed to parse ip"), "failed to parse ip")
 			}
 
-			if netiputil.IsFamilyMatched(netip.Addr(g), ip) {
-				clientIP = ip
-				break
+			if local4 == nil && ip.Is4() {
+				local4 = &ip
+			}
+			if local6 == nil && ip.Is6() {
+				local6 = &ip
 			}
 		}
 
-		ft, err := fou.NewFoUTunnelController(s.egressPort)
+		ft, err := fou.NewFoUTunnelController(s.egressPort, local4, local6)
+		if err != nil {
+			return nil, newInternalError(err, "failed to create FoUTunnelController")
+		}
+		if err := ft.Init(); err != nil {
+			return nil, newInternalError(err, "failed to initialize FoUTunnel")
+		}
 	}
 }
 
