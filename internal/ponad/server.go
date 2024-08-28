@@ -104,13 +104,15 @@ func (s *server) Add(ctx context.Context, args *cnirpc.CNIArgs) (*cnirpc.AddResp
 		return nil, nil
 	}
 
+	gwToDests := make(gwToDests)
 	for _, egName := range egNames {
 		g, ds, err := s.collectDestinationsForEgress(ctx, egName)
 		if err != nil {
 			return nil, newInternalError(err, "failed to collect destinations for egress")
 		}
-
+		gwToDests[g] = ds
 	}
+
 }
 
 func (s *server) listEgress(pod *corev1.Pod) ([]client.ObjectKey, error) {
