@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/containernetworking/cni/pkg/types"
+	cni100 "github.com/containernetworking/cni/pkg/types/100"
 	"github.com/containernetworking/cni/pkg/version"
 	"github.com/cybozu-go/pona/pkg/cnirpc"
 )
@@ -16,18 +17,20 @@ type PluginConf struct {
 	Socket string `json:"socket"`
 }
 
-func ParseConfig(cniargs *cnirpc.CNIArgs) error {
+func GetPrevResult(cniargs *cnirpc.CNIArgs) (*cni100.Result, error) {
 	conf := &PluginConf{}
 
 	if err := json.Unmarshal(cniargs.StdinData, conf); err != nil {
-		return fmt.Errorf("failed to unmarshal NetConf: %w", err)
+		return nil, fmt.Errorf("failed to unmarshal NetConf: %w", err)
 	}
 
 	if err := version.ParsePrevResult(&conf.NetConf); err != nil {
-		return fmt.Errorf("failed to parse prev result: %w", err)
+		return nil, fmt.Errorf("failed to parse prev result: %w", err)
 	}
-	result, err := conf.PrevResult.GetAsVersion(conf.CNIVersion)
+	r, err := cni100.GetResult(conf.NetConf.PrevResult)
 	if err != nil {
-		return fmt.Errorf("failed to")
+		return nil, fmt.Errorf("failed to get prevresult")
 	}
+
+	return r, nil
 }

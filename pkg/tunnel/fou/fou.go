@@ -202,8 +202,8 @@ func (t *FouTunnelController) addPeer4(addr netip.Addr) (netlink.Link, error) {
 		EncapType:  netlink.FOU_ENCAP_DIRECT,
 		EncapDport: uint16(t.port),
 		EncapSport: 0, // sportauto is always on
-		Remote:     netiputil.ConvNetIP(addr),
-		Local:      netiputil.ConvNetIP(*t.local4),
+		Remote:     netiputil.FromAddr(addr),
+		Local:      netiputil.FromAddr(*t.local4),
 	}
 	if err := netlink.LinkAdd(link); err != nil {
 		return nil, fmt.Errorf("netlink: failed to add fou link: %w", err)
@@ -244,8 +244,8 @@ func (t *FouTunnelController) addPeer6(addr netip.Addr) (netlink.Link, error) {
 		EncapType:  netlink.FOU_ENCAP_DIRECT,
 		EncapDport: uint16(t.port),
 		EncapSport: 0, // sportauto is always on
-		Remote:     netiputil.ConvNetIP(addr),
-		Local:      netiputil.ConvNetIP(*t.local6),
+		Remote:     netiputil.FromAddr(addr),
+		Local:      netiputil.FromAddr(*t.local6),
 	}
 	if err := netlink.LinkAdd(link); err != nil {
 		return nil, fmt.Errorf("netlink: failed to add fou link: %w", err)

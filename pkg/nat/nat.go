@@ -70,7 +70,7 @@ func (c *controller) Init() error {
 		if err != nil {
 			return err
 		}
-		ipn := netlink.NewIPNet(netiputil.ConvNetIP(*c.ipv4))
+		ipn := netlink.NewIPNet(netiputil.FromAddr(*c.ipv4))
 		err = ipt.Append("nat", "POSTROUTING", "!", "-s", ipn.String(), "-o", c.iface, "-j", "MASQUERADE")
 		if err != nil {
 			return fmt.Errorf("failed to setup masquerade rule for IPv4: %w", err)
@@ -86,7 +86,7 @@ func (c *controller) Init() error {
 		if err != nil {
 			return err
 		}
-		ipn := netlink.NewIPNet(netiputil.ConvNetIP(*c.ipv6))
+		ipn := netlink.NewIPNet(netiputil.FromAddr(*c.ipv6))
 		err = ipt.Append("nat", "POSTROUTING", "!", "-s", ipn.String(), "-o", c.iface, "-j", "MASQUERADE")
 		if err != nil {
 			return fmt.Errorf("failed to setup masquerade rule for IPv6: %w", err)
@@ -135,7 +135,7 @@ func (c *controller) AddClient(addr netip.Addr, link netlink.Link) error {
 		if r.Dst == nil {
 			continue
 		}
-		if r.Dst.IP.Equal(netiputil.ConvNetIP(addr)) {
+		if r.Dst.IP.Equal(netiputil.FromAddr(addr)) {
 			return nil
 		}
 	}
@@ -146,7 +146,7 @@ func (c *controller) AddClient(addr netip.Addr, link netlink.Link) error {
 		return fmt.Errorf("netlink: failed to link up %s: %w", link.Attrs().Name, err)
 	}
 	if err := netlink.RouteAdd(&netlink.Route{
-		Dst:       netlink.NewIPNet(netiputil.ConvNetIP(addr)),
+		Dst:       netlink.NewIPNet(netiputil.FromAddr(addr)),
 		LinkIndex: link.Attrs().Index,
 		Table:     egressTableID,
 		Protocol:  egressProtocolID,

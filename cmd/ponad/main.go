@@ -96,7 +96,7 @@ func startPonad(config Config, mgr ctrl.Manager) error {
 		return err
 	}
 
-	s := ponad.NewServer(l, mgr.GetAPIReader())
+	s := ponad.NewServer(l, mgr.GetAPIReader(), config.egressPort)
 	if err := mgr.Add(s); err != nil {
 		return err
 	}

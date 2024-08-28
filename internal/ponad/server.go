@@ -11,7 +11,10 @@ import (
 
 	ponav1beta1 "github.com/cybozu-go/pona/api/v1beta1"
 	"github.com/cybozu-go/pona/internal/constants"
+	"github.com/cybozu-go/pona/pkg/cni"
 	"github.com/cybozu-go/pona/pkg/cnirpc"
+	"github.com/cybozu-go/pona/pkg/tunnel/fou"
+	"github.com/cybozu-go/pona/pkg/util/netiputil"
 	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/logging"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -54,14 +57,16 @@ func InterceptorLogger(l *slog.Logger) logging.Logger {
 type server struct {
 	cnirpc.UnimplementedCNIServer
 
-	listener  net.Listener
-	apiReader client.Reader
+	listener   net.Listener
+	apiReader  client.Reader
+	egressPort int
 }
 
-func NewServer(l net.Listener, r client.Reader) *server {
+func NewServer(l net.Listener, r client.Reader, egressPort int) *server {
 	return &server{
-		listener:  l,
-		apiReader: r,
+		listener:   l,
+		apiReader:  r,
+		egressPort: egressPort,
 	}
 }
 
@@ -104,15 +109,32 @@ func (s *server) Add(ctx context.Context, args *cnirpc.CNIArgs) (*cnirpc.AddResp
 		return nil, nil
 	}
 
-	gwToDests := make(gwToDests)
+	p, err := cni.GetPrevResult(args)
+	if err != nil {
+		return nil, newInternalError(err, "failed to get previous result")
+	}
+
 	for _, egName := range egNames {
 		g, ds, err := s.collectDestinationsForEgress(ctx, egName)
 		if err != nil {
 			return nil, newInternalError(err, "failed to collect destinations for egress")
 		}
-		gwToDests[g] = ds
-	}
 
+		var clientIP netip.Addr
+		for _, ipc := range p.IPs {
+			ip, ok := netiputil.ToAddr(ipc.Gateway)
+			if !ok {
+				return nil, newInternalError(errors.New("failed to parse ip"), "failed to parse ip")
+			}
+
+			if netiputil.IsFamilyMatched(netip.Addr(g), ip) {
+				clientIP = ip
+				break
+			}
+		}
+
+		ft, err := fou.NewFoUTunnelController(s.egressPort)
+	}
 }
 
 func (s *server) listEgress(pod *corev1.Pod) ([]client.ObjectKey, error) {
