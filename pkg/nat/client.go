@@ -3,10 +3,12 @@ package nat
 import (
 	"errors"
 	"fmt"
-	"net"
+	"maps"
 	"net/netip"
+	"slices"
 	"sync"
 
+	"github.com/cybozu-go/pona/pkg/util/netiputil"
 	"github.com/vishvananda/netlink"
 )
 
@@ -46,7 +48,7 @@ var (
 type Client interface {
 	Init() error
 	IsInitialized() (bool, error)
-	AddEgress(link netlink.Link, subnets []netip.Prefix) error
+	UpdateRoutes(link netlink.Link, subnets []netip.Prefix) error
 }
 
 type natClient struct {
@@ -116,42 +118,28 @@ func (c *natClient) clear(family int) error {
 		}
 		if r.Dst == nil {
 			// workaround for a library issue
-			r.Dst = net.IPNet
-			defaultGW
+			n := netiputil.ToIPNet(defaultGW)
+			r.Dst = &n
 		}
 		if err := netlink.RuleDel(&r); err != nil {
 			return fmt.Errorf("netlink: failed to delete a rule: %+v, %w", r, err)
 		}
 	}
 
-	routes, err := netlink.RouteListFiltered(family, &netlink.Route{Table: ncNarrowTableID}, netlink.RT_FILTER_TABLE)
+	routes, err := netlink.RouteListFiltered(family, &netlink.Route{Table: ncTableID}, netlink.RT_FILTER_TABLE)
 	if err != nil {
 		return fmt.Errorf("netlink: route list failed: %w", err)
 	}
 	for _, r := range routes {
 		if r.Dst == nil {
 			// workaround for a library issue
-			r.Dst = defaultGW
+			n := netiputil.ToIPNet(defaultGW)
+			r.Dst = &n
 		}
 		if err := netlink.RouteDel(&r); err != nil {
-			return fmt.Errorf("netlink: failed to delete a route in table %d: %+v, %w", ncNarrowTableID, r, err)
+			return fmt.Errorf("netlink: failed to delete a route in table %d: %+v, %w", ncTableID, r, err)
 		}
 	}
-
-	routes, err = netlink.RouteListFiltered(family, &netlink.Route{Table: ncWideTableID}, netlink.RT_FILTER_TABLE)
-	if err != nil {
-		return fmt.Errorf("netlink: route list failed: %w", err)
-	}
-	for _, r := range routes {
-		if r.Dst == nil {
-			// workaround for a library issue
-			r.Dst = defaultGW
-		}
-		if err := netlink.RouteDel(&r); err != nil {
-			return fmt.Errorf("netlink: failed to delete a route in table %d: %+v, %w", ncWideTableID, r, err)
-		}
-	}
-
 	return nil
 }
 
@@ -176,6 +164,83 @@ func (c *natClient) Init() error {
 			return fmt.Errorf("netlink: failed to add v6 natclient rule: %w", err)
 		}
 	}
-
 	return nil
+}
+
+func (c *natClient) IsInitialized() (bool, error) {
+	if c.ipv4 {
+		// check whether exact one rule exists
+		rules, err := netlink.RuleListFiltered(netlink.FAMILY_V4, &netlink.Rule{Table: ncTableID}, netlink.RT_FILTER_TABLE)
+		if err != nil {
+			return false, fmt.Errorf("netlink: failed to list v4 rule: %w", err)
+		}
+		if len(rules) != 1 {
+			return false, nil
+		}
+		return true, nil
+	}
+	if c.ipv6 {
+		// check whether exact one rule exists
+		rules, err := netlink.RuleListFiltered(netlink.FAMILY_V6, &netlink.Rule{Table: ncTableID}, netlink.RT_FILTER_TABLE)
+		if err != nil {
+			return false, fmt.Errorf("netlink: failed to list v6 rule: %w", err)
+		}
+		if len(rules) != 1 {
+			return false, nil
+		}
+		return true, nil
+	}
+	return true, nil
+}
+
+func (c *natClient) UpdateRoutes(link netlink.Link, subnets []netip.Prefix) error {
+	routes, err := collectRoutes(link.Attrs().Index)
+	if err != nil {
+		return fmt.Errorf("failed to collect routes: %w", err)
+	}
+
+	var adds []netip.Prefix
+	var dels []netip.Prefix
+
+	for _, n := range subnets {
+		if _, ok := routes[n]; !ok {
+			adds = append(adds, n)
+		}
+	}
+
+	slices.DeleteFunc(routes, func(p netip.Prefix) bool {
+
+	})
+}
+
+func collectRoutes(linkIndex int) (map[netip.Prefix]netlink.Route, error) {
+	r4, err := collectRoute1(linkIndex, netlink.FAMILY_V4)
+	if err != nil {
+		return nil, fmt.Errorf("failed to collect routes: %w", err)
+	}
+	r6, err := collectRoute1(linkIndex, netlink.FAMILY_V6)
+	if err != nil {
+		return nil, fmt.Errorf("failed to collect routes: %w", err)
+	}
+	maps.Copy(r4, r6)
+	return r4, nil
+}
+
+func collectRoute1(linkIndex, family int) (map[netip.Prefix]netlink.Route, error) {
+	routes := make(map[netip.Prefix]netlink.Route)
+
+	ro, err := netlink.RouteListFiltered(netlink.FAMILY_V4, &netlink.Route{Table: ncTableID}, netlink.RT_FILTER_TABLE)
+	if err != nil {
+		return nil, fmt.Errorf("netlink: failed to list v4 routes: %w", err)
+	}
+	for _, r := range ro {
+		if r.LinkIndex == linkIndex && r.Dst != nil {
+			d, ok := netiputil.FromIPNet(*r.Dst)
+			if !ok {
+				return nil, fmt.Errorf("failed to convert to netip.Addr from net.IP: %w", err)
+			}
+			routes[d] = r
+		}
+	}
+	return routes, nil
 }

@@ -21,3 +21,11 @@ func ToIPNet(prefix netip.Prefix) net.IPNet {
 	ip := FromAddr(prefix.Addr())
 	return net.IPNet{IP: ip, Mask: net.CIDRMask(prefix.Bits(), prefix.Addr().BitLen())}
 }
+func FromIPNet(from net.IPNet) (to netip.Prefix, ok bool) {
+	ip, ok := ToAddr(from.IP)
+	if !ok {
+		return netip.Prefix{}, false
+	}
+	ones, _ := from.Mask.Size()
+	return netip.PrefixFrom(ip, ones), true
+}
