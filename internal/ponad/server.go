@@ -13,6 +13,7 @@ import (
 	"github.com/cybozu-go/pona/internal/constants"
 	"github.com/cybozu-go/pona/pkg/cni"
 	"github.com/cybozu-go/pona/pkg/cnirpc"
+	"github.com/cybozu-go/pona/pkg/nat"
 	"github.com/cybozu-go/pona/pkg/tunnel/fou"
 	"github.com/cybozu-go/pona/pkg/util/netiputil"
 	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/logging"
@@ -114,34 +115,46 @@ func (s *server) Add(ctx context.Context, args *cnirpc.CNIArgs) (*cnirpc.AddResp
 		return nil, newInternalError(err, "failed to get previous result")
 	}
 
+	var local4, local6 *netip.Addr
+	for _, ipc := range p.IPs {
+		ip, ok := netiputil.ToAddr(ipc.Gateway)
+		if !ok {
+			return nil, newInternalError(errors.New("failed to parse ip"), "failed to parse ip")
+		}
+		if local4 == nil && ip.Is4() {
+			local4 = &ip
+		}
+		if local6 == nil && ip.Is6() {
+			local6 = &ip
+		}
+	}
+
+	ft, err := fou.NewFoUTunnelController(s.egressPort, local4, local6)
+	if err != nil {
+		return nil, newInternalError(err, "failed to create FoUTunnelController")
+	}
+	if err := ft.Init(); err != nil {
+		return nil, newInternalError(err, "failed to initialize FoUTunnel")
+	}
+	nt, err := nat.NewNatClient(local4 != nil, local6 != nil)
+	if err != nil {
+		return nil, newInternalError(err, "failed to create Nat client")
+	}
+	if err := nt.Init(); err != nil {
+		return nil, newInternalError(err, "failed to initialize Nat client")
+	}
+
 	for _, egName := range egNames {
 		g, ds, err := s.collectDestinationsForEgress(ctx, egName)
 		if err != nil {
 			return nil, newInternalError(err, "failed to collect destinations for egress")
 		}
 
-		var local4, local6 *netip.Addr
-		for _, ipc := range p.IPs {
-			ip, ok := netiputil.ToAddr(ipc.Gateway)
-			if !ok {
-				return nil, newInternalError(errors.New("failed to parse ip"), "failed to parse ip")
-			}
-
-			if local4 == nil && ip.Is4() {
-				local4 = &ip
-			}
-			if local6 == nil && ip.Is6() {
-				local6 = &ip
-			}
-		}
-
-		ft, err := fou.NewFoUTunnelController(s.egressPort, local4, local6)
+		link, err := ft.AddPeer(netip.Addr(g))
 		if err != nil {
-			return nil, newInternalError(err, "failed to create FoUTunnelController")
+			return nil, newInternalError(err, fmt.Sprintf("failed to add peer for %v", g))
 		}
-		if err := ft.Init(); err != nil {
-			return nil, newInternalError(err, "failed to initialize FoUTunnel")
-		}
+		nt.UpdateRoutes(link, []netip.Addr(ds))
 	}
 }
 
@@ -167,9 +180,7 @@ func (s *server) listEgress(pod *corev1.Pod) ([]client.ObjectKey, error) {
 	return egNames, nil
 }
 
-type gateway netip.Addr
-type destination netip.Prefix
-type gwToDests map[gateway][]destination
+type gwToDests map[netip.Addr][]netip.Prefix
 
 func (s *server) collectDestinationsForEgress(ctx context.Context, egName client.ObjectKey) (gateway, []destination, error) {
 	eg := &ponav1beta1.Egress{}

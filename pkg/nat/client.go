@@ -1,11 +1,10 @@
 package nat
 
 import (
-	"errors"
 	"fmt"
 	"maps"
 	"net/netip"
-	"sync"
+	"slices"
 
 	"github.com/cybozu-go/pona/pkg/util/netiputil"
 	"github.com/vishvananda/netlink"
@@ -18,6 +17,8 @@ const (
 
 	ncTableID   = 117
 	mainTableID = 254
+	throwMetric = 500
+	routeMetric = 100
 )
 
 // rule priorities
@@ -52,48 +53,14 @@ type Client interface {
 }
 
 type natClient struct {
-	ipv4 bool
-	ipv6 bool
-
-	v4priv []netip.Prefix
-	v6priv []netip.Prefix
-
-	mu sync.Mutex
+	useipv4 bool
+	useipv6 bool
 }
 
-func NewNatClient(ipv4, ipv6 *netip.Addr, podNodeNet []netip.Prefix) (Client, error) {
-	if ipv4 != nil && !ipv4.Is4() {
-		return nil, errors.New("invalid ipv4 address")
-	}
-
-	if ipv6 != nil && !ipv6.Is6() {
-		return nil, errors.New("invalid ipv6 address")
-	}
-
-	if ipv4 == nil && ipv6 == nil {
-		return nil, errors.New("invalid arguments")
-	}
-
-	var v4priv, v6priv []netip.Prefix
-	if len(podNodeNet) > 0 {
-		for _, n := range podNodeNet {
-			if n.Addr().Is4() {
-				v4priv = append(v4priv, n)
-			} else if n.Addr().Is6() {
-				v6priv = append(v6priv, n)
-			}
-		}
-	} else {
-		v4priv = v4PrivateList
-		v6priv = v6PrivateList
-	}
-
+func NewNatClient(useipv4, useipv6 bool) (Client, error) {
 	return &natClient{
-		ipv4: ipv4 != nil,
-		ipv6: ipv6 != nil,
-
-		v4priv: v4priv,
-		v6priv: v4priv,
+		useipv4: useipv4,
+		useipv6: useipv6,
 	}, nil
 }
 
@@ -149,7 +116,7 @@ func (c *natClient) clear(family int) error {
 }
 
 func (c *natClient) Init() error {
-	if c.ipv4 {
+	if c.useipv4 {
 		if err := c.clear(netlink.FAMILY_V4); err != nil {
 			return err
 		}
@@ -159,7 +126,7 @@ func (c *natClient) Init() error {
 		}
 	}
 
-	if c.ipv6 {
+	if c.useipv6 {
 		if err := c.clear(netlink.FAMILY_V6); err != nil {
 			return err
 		}
@@ -173,7 +140,7 @@ func (c *natClient) Init() error {
 }
 
 func (c *natClient) IsInitialized() (bool, error) {
-	if c.ipv4 {
+	if c.useipv4 {
 		// check whether exact one rule exists
 		rules, err := netlink.RuleListFiltered(netlink.FAMILY_V4, &netlink.Rule{Table: ncTableID}, netlink.RT_FILTER_TABLE)
 		if err != nil {
@@ -184,7 +151,7 @@ func (c *natClient) IsInitialized() (bool, error) {
 		}
 		return true, nil
 	}
-	if c.ipv6 {
+	if c.useipv6 {
 		// check whether exact one rule exists
 		rules, err := netlink.RuleListFiltered(netlink.FAMILY_V6, &netlink.Rule{Table: ncTableID}, netlink.RT_FILTER_TABLE)
 		if err != nil {
@@ -226,19 +193,23 @@ func (c *natClient) UpdateRoutes(link netlink.Link, subnets []netip.Prefix) erro
 		return fmt.Errorf("netlink: failed to link up %s: %w", link.Attrs().Name, err)
 	}
 
-	for _, v := range v4PrivateList {
-		c.addThrow(link, v)
-	}
-	for _, v := range v6PrivateList {
+	for _, v := range slices.Concat(v4PrivateList, v6PrivateList,
+		[]netip.Prefix{v4LinkLocal, v6LinkLocal},
+	) {
 		c.addThrow(link, v)
 	}
 
-	for _, n := range adds {
-		if err := c.addRoute(link, n); err != nil {
+	for _, r := range adds {
+		if err := c.addRoute(link, r); err != nil {
 			return err
 		}
 	}
-
+	for _, r := range dels {
+		if err := c.delRoute(r); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func collectRoutes(linkIndex int) (map[netip.Prefix]netlink.Route, error) {
@@ -257,7 +228,7 @@ func collectRoutes(linkIndex int) (map[netip.Prefix]netlink.Route, error) {
 func collectRoute1(linkIndex, family int) (map[netip.Prefix]netlink.Route, error) {
 	routes := make(map[netip.Prefix]netlink.Route)
 
-	ro, err := netlink.RouteListFiltered(netlink.FAMILY_V4, &netlink.Route{Table: ncTableID}, netlink.RT_FILTER_TABLE)
+	ro, err := netlink.RouteListFiltered(family, &netlink.Route{Table: ncTableID}, netlink.RT_FILTER_TABLE)
 	if err != nil {
 		return nil, fmt.Errorf("netlink: failed to list v4 routes: %w", err)
 	}
@@ -289,6 +260,7 @@ func (c *natClient) addThrow(link netlink.Link, n netip.Prefix) error {
 		Type:      unix.RTN_THROW,
 		LinkIndex: link.Attrs().Index,
 		Protocol:  ncProtocolID,
+		Priority:  throwMetric,
 	})
 	if err != nil {
 		return fmt.Errorf("netlink: failed to add route(table %d) to %s: %w", ncTableID, n.String(), err)
@@ -298,44 +270,21 @@ func (c *natClient) addThrow(link netlink.Link, n netip.Prefix) error {
 }
 
 func (c *natClient) addRoute(link netlink.Link, n netip.Prefix) error {
-	var priv []netip.Prefix
-	if n.Addr().Is4() {
-		if !c.ipv4 {
-			return nil
-		}
-		priv = c.v4priv
-	} else {
-		if !c.ipv6 {
-			return nil
-		}
-		priv = c.v6priv
-	}
-
-	for _, p := range priv {
-		if !p.Contains(n.IP) {
-			continue
-		}
-
-		err := netlink.RouteAdd(&netlink.Route{
-			Table:     ncNarrowTableID,
-			Dst:       n,
-			LinkIndex: link.Attrs().Index,
-			Protocol:  ncProtocolID,
-		})
-		if err != nil {
-			return fmt.Errorf("netlink: failed to add route(table %d) to %s: %w", ncNarrowTableID, n.String(), err)
-		}
-		return nil
-	}
+	a := netiputil.ToIPNet(n)
 
 	err := netlink.RouteAdd(&netlink.Route{
-		Table:     ncWideTableID,
-		Dst:       n,
+		Table:     ncTableID,
+		Dst:       &a,
 		LinkIndex: link.Attrs().Index,
 		Protocol:  ncProtocolID,
+		Priority:  routeMetric,
 	})
 	if err != nil {
-		return fmt.Errorf("netlink: failed to add route(table %d) to %s: %w", ncWideTableID, n.String(), err)
+		return fmt.Errorf("netlink: failed to add route(table %d) to %s: %w", ncTableID, n.String(), err)
 	}
 	return nil
+}
+
+func (c *natClient) delRoute(n netlink.Route) error {
+	return netlink.RouteDel(&n)
 }
