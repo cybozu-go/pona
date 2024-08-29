@@ -27,7 +27,7 @@ spec:
       - name: ponad
         image: ponad:dev
         env:
-        - name: COIL_NODE_NAME
+        - name: PONA_NODE_NAME
           valueFrom:
             fieldRef:
               fieldPath: spec.nodeName

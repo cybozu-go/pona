@@ -13,7 +13,7 @@ import (
 type PluginConf struct {
 	types.NetConf
 
-	// Socket contains unix domain socket to communicate with coild
+	// Socket contains unix domain socket to communicate with ponad
 	Socket string `json:"socket"`
 }
 

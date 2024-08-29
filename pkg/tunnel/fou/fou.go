@@ -284,7 +284,7 @@ func (t *FouTunnelController) DelPeer(addr netip.Addr) error {
 // the router Pods.
 //
 // Calling this function may result in tunl0 (v4) or ip6tnl0 (v6)
-// fallback interface being renamed to coil_tunl or coil_ip6tnl.
+// fallback interface being renamed to pona_tunl or pona_ip6tnl.
 // This is to communicate to the user that this plugin has taken
 // control of the encapsulation stack on the netns, as it currently
 // doesn't explicitly support sharing it with other tools/CNIs.
@@ -297,7 +297,7 @@ func (t *FouTunnelController) DelPeer(addr netip.Addr) error {
 // By default, these interfaces will be created in new network namespaces,
 // but this behavior can be disabled by setting net.core.fb_tunnels_only_for_init_net = 2.
 func setupFlowBasedIP4TunDevice() error {
-	ipip4Device := "coil_ipip4"
+	ipip4Device := "pona_ipip4"
 	// Set up IPv4 tunnel device if requested.
 	if err := setupDevice(&netlink.Iptun{
 		LinkAttrs: netlink.LinkAttrs{Name: ipip4Device},
@@ -317,7 +317,7 @@ func setupFlowBasedIP4TunDevice() error {
 
 // See setupFlowBasedIP4TunDevice
 func setupFlowBasedIP6TunDevice() error {
-	ipip6Device := "coil_ipip6"
+	ipip6Device := "pona_ipip6"
 
 	// Set up IPv6 tunnel device if requested.
 	if err := setupDevice(&netlink.Ip6tnl{
@@ -329,7 +329,7 @@ func setupFlowBasedIP6TunDevice() error {
 
 	// Rename fallback device created by potential kernel module load after
 	// creating tunnel interface.
-	if err := renameDevice("ip6tnl0", "coil_ip6tnl"); err != nil {
+	if err := renameDevice("ip6tnl0", "pona_ip6tnl"); err != nil {
 		return fmt.Errorf("renaming fallback device %s: %w", "tunl0", err)
 	}
 
