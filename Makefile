@@ -78,7 +78,7 @@ test: envtest manifests generate fmt vet mod ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
 .PHONY: check-generate
-check-generate: manifests fmt mod
+check-generate: setup manifests fmt mod
 	-rm $(ROLES) $(PROTOC_OUTPUTS)
 	$(MAKE) generate
 	git diff --exit-code --name-only
