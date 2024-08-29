@@ -25,18 +25,15 @@ func installPona(ponaPath, cniBinDir string) error {
 		os.Remove(g.Name())
 	}()
 
-	_, err = io.Copy(g, f)
-	if err != nil {
+	if _, err := io.Copy(g, f); err != nil {
 		return fmt.Errorf("failed to io.Copy: %w", err)
 	}
 
-	err = g.Chmod(0755)
-	if err != nil {
+	if err := g.Chmod(0755); err != nil {
 		return fmt.Errorf("failed to chmod: %w", err)
 	}
 
-	err = g.Sync()
-	if err != nil {
+	if err := g.Sync(); err != nil {
 		return fmt.Errorf("failed to Sync: %w", err)
 	}
 
