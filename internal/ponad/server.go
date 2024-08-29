@@ -27,13 +27,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// Keys in CNI_ARGS
-const (
-	PodNameKey      = "K8S_POD_NAME"
-	PodNamespaceKey = "K8S_POD_NAMESPACE"
-	PodContainerKey = "K8S_POD_INFRA_CONTAINER_ID"
-)
-
 func newError(c codes.Code, cniCode cnirpc.ErrorCode, msg, details string) error {
 	st := status.New(c, msg)
 	st, err := st.WithDetails(&cnirpc.CNIError{Code: cniCode, Msg: msg, Details: details})
@@ -89,8 +82,8 @@ func (s *server) Start(ctx context.Context) error {
 }
 
 func (s *server) Add(ctx context.Context, args *cnirpc.CNIArgs) (*cnirpc.AddResponse, error) {
-	podName := args.Args[PodNameKey]
-	podNS := args.Args[PodNamespaceKey]
+	podName := args.Args[constants.PodNameKey]
+	podNS := args.Args[constants.PodNamespaceKey]
 	if podName == "" || podNS == "" {
 		return nil, fmt.Errorf("missing pod name or namespace, args: %#v", args.Args)
 	}
