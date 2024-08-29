@@ -254,15 +254,14 @@ func subnetsSet(subnets []netip.Prefix) map[netip.Prefix]struct{} {
 	return subnetsSet
 }
 
-func (c *natClient) addThrow(link netlink.Link, n netip.Prefix) error {
+func (c *natClient) addThrow(n netip.Prefix) error {
 	dst := netiputil.ToIPNet(n)
 	err := netlink.RouteAdd(&netlink.Route{
-		Table:     ncTableID,
-		Dst:       &dst,
-		Type:      unix.RTN_THROW,
-		LinkIndex: link.Attrs().Index,
-		Protocol:  ncProtocolID,
-		Priority:  throwMetric,
+		Table:    ncTableID,
+		Dst:      &dst,
+		Type:     unix.RTN_THROW,
+		Protocol: ncProtocolID,
+		Priority: throwMetric,
 	})
 	if err != nil {
 		return fmt.Errorf("netlink: failed to add route(table %d) to %s: %w", ncTableID, n.String(), err)
