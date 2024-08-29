@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"strings"
 
+	"github.com/containernetworking/plugins/pkg/ns"
 	ponav1beta1 "github.com/cybozu-go/pona/api/v1beta1"
 	"github.com/cybozu-go/pona/internal/constants"
 	"github.com/cybozu-go/pona/pkg/cni"
@@ -127,34 +128,45 @@ func (s *server) Add(ctx context.Context, args *cnirpc.CNIArgs) (*cnirpc.AddResp
 		}
 	}
 
-	ft, err := fou.NewFoUTunnelController(s.egressPort, local4, local6)
+	containerNS, err := ns.GetNS(args.Netns)
 	if err != nil {
-		return nil, newInternalError(err, "failed to create FoUTunnelController")
+		return nil, fmt.Errorf("failed to open netns path %s: %w", args.Netns, err)
 	}
-	if err := ft.Init(); err != nil {
-		return nil, newInternalError(err, "failed to initialize FoUTunnel")
-	}
-	nt, err := nat.NewNatClient(local4 != nil, local6 != nil)
-	if err != nil {
-		return nil, newInternalError(err, "failed to create Nat client")
-	}
-	if err := nt.Init(); err != nil {
-		return nil, newInternalError(err, "failed to initialize Nat client")
-	}
+	defer containerNS.Close()
 
-	for _, egName := range egNames {
-		g, ds, err := s.collectDestinationsForEgress(ctx, egName)
+	if err := containerNS.Do(func(hostNS ns.NetNS) error {
+		ft, err := fou.NewFoUTunnelController(s.egressPort, local4, local6)
 		if err != nil {
-			return nil, newInternalError(err, "failed to collect destinations for egress")
+			return newInternalError(err, "failed to create FoUTunnelController")
+		}
+		if err := ft.Init(); err != nil {
+			return newInternalError(err, "failed to initialize FoUTunnel")
+		}
+		nt, err := nat.NewNatClient(local4 != nil, local6 != nil)
+		if err != nil {
+			return newInternalError(err, "failed to create Nat client")
+		}
+		if err := nt.Init(); err != nil {
+			return newInternalError(err, "failed to initialize Nat client")
 		}
 
-		link, err := ft.AddPeer(netip.Addr(g))
-		if err != nil {
-			return nil, newInternalError(err, fmt.Sprintf("failed to add peer for %v", g))
+		for _, egName := range egNames {
+			g, ds, err := s.collectDestinationsForEgress(ctx, egName)
+			if err != nil {
+				return newInternalError(err, "failed to collect destinations for egress")
+			}
+
+			link, err := ft.AddPeer(netip.Addr(g))
+			if err != nil {
+				return newInternalError(err, fmt.Sprintf("failed to add peer for %v", g))
+			}
+			if err := nt.UpdateRoutes(link, ds); err != nil {
+				return newInternalError(err, "failed to update routes")
+			}
 		}
-		if err := nt.UpdateRoutes(link, ds); err != nil {
-			return nil, newInternalError(err, "failed to update routes")
-		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
 	b, err := json.Marshal(p)
