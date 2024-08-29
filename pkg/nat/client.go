@@ -196,7 +196,9 @@ func (c *natClient) UpdateRoutes(link netlink.Link, subnets []netip.Prefix) erro
 	for _, v := range slices.Concat(v4PrivateList, v6PrivateList,
 		[]netip.Prefix{v4LinkLocal, v6LinkLocal},
 	) {
-		c.addThrow(link, v)
+		if err := c.addThrow(link, v); err != nil {
+			return err
+		}
 	}
 
 	for _, r := range adds {
