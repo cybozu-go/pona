@@ -2,6 +2,7 @@
 FROM ghcr.io/cybozu/golang:1.22-jammy AS builder
 ARG TARGETOS
 ARG TARGETARCH
+ARG PONA_VERSION
 
 WORKDIR /workspace
 
@@ -14,9 +15,9 @@ RUN --mount=type=cache,target=/go/pkg/mod/,sharing=locked \
 COPY . .
 
 RUN --mount=type=cache,target=/go/pkg/mod/ \
-    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o ponad ./cmd/ponad/main.go && \
-    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o pona ./cmd/pona && \
-    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o pona-installer ./cmd/pona-installer
+    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o ponad -ldflags "-X github.com/cybozu-go/pona.Version=${PONA_VERSION}" ./cmd/ponad/main.go && \
+    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o pona -ldflags "-X github.com/cybozu-go/pona.Version=${PONA_VERSION}" ./cmd/pona && \
+    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o pona-installer -ldflags "-X github.com/cybozu-go/pona.Version=${PONA_VERSION}" ./cmd/pona-installer
 
 
 FROM ghcr.io/cybozu/ubuntu:22.04

@@ -2,6 +2,7 @@
 FROM ghcr.io/cybozu/golang:1.22-jammy AS builder
 ARG TARGETOS
 ARG TARGETARCH
+ARG PONA_VERSION
 
 WORKDIR /workspace
 
@@ -14,7 +15,7 @@ RUN --mount=type=cache,target=/go/pkg/mod/,sharing=locked \
 COPY . .
 
 RUN --mount=type=cache,target=/go/pkg/mod/ \
-    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o egress-controller cmd/egress-controller/main.go
+    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o egress-controller -ldflags "-X github.com/cybozu-go/pona.Version=${PONA_VERSION}"  cmd/egress-controller/main.go
 
 FROM ghcr.io/cybozu/ubuntu:22.04
 WORKDIR /

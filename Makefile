@@ -3,6 +3,7 @@ IMG_TAG ?= dev
 IMG_CONTROLLER ?= egress-controller:$(IMG_TAG)
 IMG_GATEWAY ?= nat-gateway:$(IMG_TAG)
 IMG_PONAD ?= ponad:$(IMG_TAG)
+PONA_VERSION ?= dev-$(shell git rev-parse --short HEAD)
 
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
 ENVTEST_K8S_VERSION = 1.30.0
@@ -110,9 +111,9 @@ run: manifests generate fmt vet mod ## Run a controller from your host.
 # More info: https://docs.docker.com/develop/develop-images/build_enhancements/
 .PHONY: docker-build
 docker-build: ## Build docker image with the manager.
-	$(CONTAINER_TOOL) build -t ${IMG_CONTROLLER} -f ./dockerfiles/Dockerfile.egress-controller .
-	$(CONTAINER_TOOL) build -t ${IMG_GATEWAY} -f ./dockerfiles/Dockerfile.nat-gateway .
-	$(CONTAINER_TOOL) build -t ${IMG_PONAD} -f ./dockerfiles/Dockerfile.ponad .
+	$(CONTAINER_TOOL) build -t ${IMG_CONTROLLER} --build-arg PONA_VERSION=${PONA_VERSION} -f ./dockerfiles/Dockerfile.egress-controller .
+	$(CONTAINER_TOOL) build -t ${IMG_GATEWAY} --build-arg PONA_VERSION=${PONA_VERSION} -f ./dockerfiles/Dockerfile.nat-gateway .
+	$(CONTAINER_TOOL) build -t ${IMG_PONAD} --build-arg PONA_VERSION=${PONA_VERSION} -f ./dockerfiles/Dockerfile.ponad .
 
 .PHONY: kind-load
 kind-load:
