@@ -30,7 +30,7 @@ const (
 var (
 	v4PrivateList = []netip.Prefix{
 		netip.MustParsePrefix("10.0.0.0/8"),
-		netip.MustParsePrefix("172.16.0.0/32"),
+		netip.MustParsePrefix("172.16.0.0/12"),
 		netip.MustParsePrefix("192.168.0.0/16"),
 	}
 
@@ -196,7 +196,7 @@ func (c *natClient) UpdateRoutes(link netlink.Link, subnets []netip.Prefix) erro
 	for _, v := range slices.Concat(v4PrivateList, v6PrivateList,
 		[]netip.Prefix{v4LinkLocal, v6LinkLocal},
 	) {
-		if err := c.addThrow(link, v); err != nil {
+		if err := c.addThrow(v); err != nil {
 			return err
 		}
 	}
