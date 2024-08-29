@@ -3,10 +3,12 @@ module github.com/cybozu-go/pona
 go 1.22.6
 
 require (
+	github.com/caarlos0/env/v10 v10.0.0
 	github.com/containernetworking/cni v1.2.3
 	github.com/containernetworking/plugins v1.5.1
 	github.com/coreos/go-iptables v0.7.0
 	github.com/grpc-ecosystem/go-grpc-middleware/v2 v2.1.0
+	github.com/joho/godotenv v1.5.1
 	github.com/onsi/ginkgo/v2 v2.19.0
 	github.com/onsi/gomega v1.33.1
 	google.golang.org/grpc v1.65.0

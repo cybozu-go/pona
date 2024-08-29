@@ -21,7 +21,7 @@ spec:
         operator: Exists
       - effect: NoExecute
         operator: Exists
-      serviceAccountName: ponad
+      serviceAccountName: egress-controller
       terminationGracePeriodSeconds: 1
       containers:
       - name: ponad
