@@ -107,7 +107,20 @@ func TestFromAddr(t *testing.T) {
 		args args
 		want net.IP
 	}{
-		// TODO: Add test cases.
+		{
+			name: "1",
+			args: args{
+				addr: netip.MustParseAddr("10.244.0.1"),
+			},
+			want: net.ParseIP("10.244.0.1").To4(),
+		},
+		{
+			name: "2",
+			args: args{
+				addr: netip.MustParseAddr("ffcc::1"),
+			},
+			want: net.ParseIP("ffcc::1").To16(),
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

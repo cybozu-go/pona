@@ -10,7 +10,12 @@ func FromAddr(addr netip.Addr) net.IP {
 }
 
 func ToAddr(ip net.IP) (netip.Addr, bool) {
-	return netip.AddrFromSlice(ip)
+	if f := ip.To4(); f != nil {
+		return netip.AddrFromSlice(f)
+	} else if f := ip.To16(); f != nil {
+		return netip.AddrFromSlice(f)
+	}
+	return netip.Addr{}, false
 }
 
 func IsFamilyMatched(a, b netip.Addr) bool {
