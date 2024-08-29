@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	ponav1beta1 "github.com/cybozu-go/pona/api/v1beta1"
 	"github.com/cybozu-go/pona/internal/ponad"
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -37,7 +38,7 @@ var (
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
-
+	utilruntime.Must(ponav1beta1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 

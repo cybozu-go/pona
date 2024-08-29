@@ -123,12 +123,24 @@ func TestToAddr(t *testing.T) {
 		ip net.IP
 	}
 	tests := []struct {
-		name  string
-		args  args
-		want  netip.Addr
-		want1 bool
+		name string
+		args args
+		want netip.Addr
 	}{
-		// TODO: Add test cases.
+		{
+			name: "1",
+			args: args{
+				ip: net.ParseIP("10.244.0.1"),
+			},
+			want: netip.MustParseAddr("10.244.0.1"),
+		},
+		{
+			name: "2",
+			args: args{
+				ip: net.ParseIP("ffcc::1"),
+			},
+			want: netip.MustParseAddr("ffcc::1"),
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -136,8 +148,8 @@ func TestToAddr(t *testing.T) {
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("ToAddr() got = %v, want %v", got, tt.want)
 			}
-			if got1 != tt.want1 {
-				t.Errorf("ToAddr() got1 = %v, want %v", got1, tt.want1)
+			if !got1 {
+				t.Errorf("ToAddr() got1 = %v, want true", got1)
 			}
 		})
 	}

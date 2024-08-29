@@ -30,7 +30,7 @@ import (
 
 func newError(c codes.Code, cniCode cnirpc.ErrorCode, msg, details string) error {
 	st := status.New(c, msg)
-	st, err := st.WithDetails(&cnirpc.CNIError{Code: cniCode, Msg: msg, Details: details})
+	st, err := st.WithDetails(&cnirpc.CNIError{Code: cniCode, Msg: msg + details, Details: details})
 	if err != nil {
 		panic(err)
 	}
@@ -39,7 +39,7 @@ func newError(c codes.Code, cniCode cnirpc.ErrorCode, msg, details string) error
 }
 
 func newInternalError(err error, msg string) error {
-	return newError(codes.Internal, cnirpc.ErrorCode_INTERNAL, msg, err.Error())
+	return newError(codes.Internal, cnirpc.ErrorCode_INTERNAL, msg+err.Error(), err.Error())
 }
 
 // InterceptorLogger adapts slog logger to interceptor logger.
@@ -101,22 +101,27 @@ func (s *server) Add(ctx context.Context, args *cnirpc.CNIArgs) (*cnirpc.AddResp
 		return nil, newInternalError(err, "failed to get pod")
 	}
 
-	egNames, err := s.listEgress(pod)
-	if err != nil {
-		return nil, newInternalError(err, "failed to list eggress from annotations")
-	}
-	if len(egNames) == 0 {
-		return nil, nil
-	}
-
 	p, err := cni.GetPrevResult(args)
 	if err != nil {
 		return nil, newInternalError(err, "failed to get previous result")
 	}
 
+	b, err := json.Marshal(p)
+	if err != nil {
+		return nil, newInternalError(err, "failed to marshal result")
+	}
+
+	egNames, err := s.listEgress(pod)
+	if err != nil {
+		return nil, newInternalError(err, "failed to list eggress from annotations")
+	}
+	if len(egNames) == 0 {
+		return &cnirpc.AddResponse{Result: b}, nil
+	}
+
 	var local4, local6 *netip.Addr
 	for _, ipc := range p.IPs {
-		ip, ok := netiputil.ToAddr(ipc.Gateway)
+		ip, ok := netiputil.ToAddr(ipc.Address.IP)
 		if !ok {
 			return nil, newInternalError(errors.New("failed to parse ip"), "failed to parse ip")
 		}
@@ -167,11 +172,6 @@ func (s *server) Add(ctx context.Context, args *cnirpc.CNIArgs) (*cnirpc.AddResp
 		return nil
 	}); err != nil {
 		return nil, err
-	}
-
-	b, err := json.Marshal(p)
-	if err != nil {
-		return nil, newInternalError(err, "failed to marshal result")
 	}
 
 	return &cnirpc.AddResponse{Result: b}, nil
