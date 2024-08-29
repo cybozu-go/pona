@@ -24,3 +24,4 @@ type Controller interface {
 }
 
 var ErrIPFamilyMismatch = errors.New("no matching IP family")
+var ErrNoIPProvided = errors.New("both of IPs are nil")

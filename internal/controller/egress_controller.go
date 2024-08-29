@@ -39,11 +39,11 @@ const (
 
 // TODO: Change this
 const (
-	EnvNode         = "COIL_NODE_NAME"
-	EnvAddresses    = "COIL_POD_ADDRESSES"
-	EnvPodNamespace = "COIL_POD_NAMESPACE"
-	EnvPodName      = "COIL_POD_NAME"
-	EnvEgressName   = "COIL_EGRESS_NAME"
+	EnvNode         = "PONA_NODE_NAME"
+	EnvAddresses    = "PONA_POD_ADDRESSES"
+	EnvPodNamespace = "PONA_POD_NAMESPACE"
+	EnvPodName      = "PONA_POD_NAME"
+	EnvEgressName   = "PONA_EGRESS_NAME"
 )
 
 // EgressReconciler reconciles a Egress object
@@ -549,7 +549,7 @@ func (r *EgressReconciler) updateStatus(ctx context.Context, eg *ponav1beta1.Egr
 	return r.Status().Update(ctx, eg)
 }
 
-// addVolumes adds volumes required by coil
+// addVolumes adds volumes required by pona
 // TODO: change this
 func (r *EgressReconciler) addVolumes(vols []corev1.Volume) []corev1.Volume {
 	noRun := true

@@ -9,8 +9,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/cybozu-go/pona/internal/nat"
-	"github.com/cybozu-go/pona/internal/tunnel"
+	"github.com/cybozu-go/pona/internal/constants"
+	"github.com/cybozu-go/pona/pkg/nat"
+	"github.com/cybozu-go/pona/pkg/tunnel"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -18,10 +19,6 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-)
-
-const (
-	EgressAnnotationPrefix = "egress.pona.cybozu.com/"
 )
 
 // PodWatcher reconciles a Pod object
@@ -38,12 +35,12 @@ type PodWatcher struct {
 	podIPToPod  map[netip.Addr]Set[types.NamespacedName]
 
 	tun tunnel.Controller
-	nat nat.Controller
+	nat nat.Gateway
 }
 
 type Set[T comparable] map[T]struct{}
 
-func NewPodWatcher(client client.Client, scheme *runtime.Scheme, egressName, egressNamespace string, t tunnel.Controller, n nat.Controller) *PodWatcher {
+func NewPodWatcher(client client.Client, scheme *runtime.Scheme, egressName, egressNamespace string, t tunnel.Controller, n nat.Gateway) *PodWatcher {
 	return &PodWatcher{
 		Client:          client,
 		Scheme:          scheme,
@@ -238,11 +235,11 @@ func (r *PodWatcher) existsOtherLiveTunnels(namespacedName types.NamespacedName,
 
 func (r *PodWatcher) hasEgressAnnotation(pod *corev1.Pod) bool {
 	for k, name := range pod.Annotations {
-		if !strings.HasPrefix(k, EgressAnnotationPrefix) {
+		if !strings.HasPrefix(k, constants.EgressAnnotationPrefix) {
 			continue
 		}
 
-		if k[len(EgressAnnotationPrefix):] != r.EgressNamespace {
+		if k[len(constants.EgressAnnotationPrefix):] != r.EgressNamespace {
 			continue
 		}
 

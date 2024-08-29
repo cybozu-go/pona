@@ -24,8 +24,8 @@ import (
 
 	ponav1beta1 "github.com/cybozu-go/pona/api/v1beta1"
 	"github.com/cybozu-go/pona/internal/controller"
-	"github.com/cybozu-go/pona/internal/nat"
-	"github.com/cybozu-go/pona/internal/tunnel/fou"
+	"github.com/cybozu-go/pona/pkg/nat"
+	"github.com/cybozu-go/pona/pkg/tunnel/fou"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -185,7 +185,7 @@ func main() {
 		setupLog.Error(err, "failed to Initialize FoUTunnelController")
 		os.Exit(1)
 	}
-	nc, err := nat.NewController("eth0", ipv4, ipv6)
+	nc, err := nat.NewGateway("eth0", ipv4, ipv6)
 	if err != nil {
 		setupLog.Error(err, "unable to create nat.Controller")
 		os.Exit(1)

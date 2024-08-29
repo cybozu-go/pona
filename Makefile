@@ -2,8 +2,14 @@
 IMG_TAG ?= dev
 IMG_CONTROLLER ?= egress-controller:$(IMG_TAG)
 IMG_GATEWAY ?= nat-gateway:$(IMG_TAG)
+IMG_PONAD ?= ponad:$(IMG_TAG)
+PONA_VERSION ?= dev-$(shell git rev-parse --short HEAD)
+
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
 ENVTEST_K8S_VERSION = 1.30.0
+
+SUDO ?= sudo
+PROTOC_OUTPUTS = pkg/cnirpc/cni.pb.go pkg/cnirpc/cni_grpc.pb.go docs/cni-grpc.md
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -52,6 +58,7 @@ manifests: controller-gen yq ## Generate WebhookConfiguration, ClusterRole and C
 
 .PHONY: generate
 generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
+	$(MAKE) $(PROTOC_OUTPUTS)
 	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./..."
 
 .PHONY: fmt
@@ -71,7 +78,9 @@ test: envtest manifests generate fmt vet mod ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
 .PHONY: check-generate
-check-generate: manifests generate fmt mod
+check-generate: setup manifests fmt mod
+	-rm $(ROLES) $(PROTOC_OUTPUTS)
+	$(MAKE) generate
 	git diff --exit-code --name-only
 
 # Utilize Kind or modify the e2e tests to load the image locally, enabling compatibility with other vendors.
@@ -102,13 +111,21 @@ run: manifests generate fmt vet mod ## Run a controller from your host.
 # More info: https://docs.docker.com/develop/develop-images/build_enhancements/
 .PHONY: docker-build
 docker-build: ## Build docker image with the manager.
-	$(CONTAINER_TOOL) build -t ${IMG_CONTROLLER} -f ./dockerfiles/Dockerfile.egress-controller .
-	$(CONTAINER_TOOL) build -t ${IMG_GATEWAY} -f ./dockerfiles/Dockerfile.nat-gateway .
+	$(CONTAINER_TOOL) build -t ${IMG_CONTROLLER} --build-arg PONA_VERSION=${PONA_VERSION} -f ./dockerfiles/Dockerfile.egress-controller .
+	$(CONTAINER_TOOL) build -t ${IMG_GATEWAY} --build-arg PONA_VERSION=${PONA_VERSION} -f ./dockerfiles/Dockerfile.nat-gateway .
+	$(CONTAINER_TOOL) build -t ${IMG_PONAD} --build-arg PONA_VERSION=${PONA_VERSION} -f ./dockerfiles/Dockerfile.ponad .
+
+.PHONY: kind-load
+kind-load:
+	kind load docker-image ${IMG_CONTROLLER}
+	kind load docker-image ${IMG_GATEWAY}
+	kind load docker-image ${IMG_PONAD}
 
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push ${IMG_CONTROLLER}
 	$(CONTAINER_TOOL) push ${IMG_GATEWAY}
+	$(CONTAINER_TOOL) push ${IMG_PONAD}
 
 # PLATFORMS defines the target platforms for the manager image be built to provide support to multiple
 # architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:
@@ -172,6 +189,7 @@ GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
 YQ = $(LOCALBIN)/yq
 WGET_OPTIONS := --retry-on-http-error=503 --retry-connrefused --no-verbose
 WGET = wget $(WGET_OPTIONS)
+PROTOC := PATH=$(LOCALBIN):'$(PATH)' $(LOCALBIN)/protoc -I=$(PWD)/include:.
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.4.2
@@ -179,6 +197,10 @@ CONTROLLER_TOOLS_VERSION ?= v0.15.0
 ENVTEST_VERSION ?= release-0.18
 GOLANGCI_LINT_VERSION ?= v1.59.1
 YQ_VERSION ?= 4.44.3
+PROTOC_VERSION=27.3
+PROTOC_GEN_GO_VERSION := $(shell awk '/google.golang.org\/protobuf/ {print substr($$2, 2)}' go.mod)
+PROTOC_GEN_GO_GRPC_VERSON=1.5.1
+PROTOC_GEN_DOC_VERSION=1.5.1
 
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
@@ -200,6 +222,26 @@ golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
 $(GOLANGCI_LINT): $(LOCALBIN)
 	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
 
+.PHONY: setup
+setup:
+	$(SUDO) apt-get update
+	$(SUDO) apt-get -y install --no-install-recommends unzip
+
+	curl -sfL -o protoc.zip https://github.com/protocolbuffers/protobuf/releases/download/v$(PROTOC_VERSION)/protoc-$(PROTOC_VERSION)-linux-x86_64.zip
+	unzip -o protoc.zip bin/protoc 'include/*'
+	rm -f protoc.zip
+	go install google.golang.org/protobuf/cmd/protoc-gen-go@v$(PROTOC_GEN_GO_VERSION)
+	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v$(PROTOC_GEN_GO_GRPC_VERSON)
+	go install github.com/pseudomuto/protoc-gen-doc/cmd/protoc-gen-doc@v$(PROTOC_GEN_DOC_VERSION)
+
+pkg/cnirpc/cni.pb.go: pkg/cnirpc/cni.proto
+	$(PROTOC) --go_out=module=github.com/cybozu-go/pona:. $<
+
+pkg/cnirpc/cni_grpc.pb.go: pkg/cnirpc/cni.proto
+	$(PROTOC) --go-grpc_out=module=github.com/cybozu-go/pona:. $<
+
+docs/cni-grpc.md: pkg/cnirpc/cni.proto
+	$(PROTOC) --doc_out=docs --doc_opt=markdown,$@ $<
 
 .PHONY: yq
 yq: $(YQ)

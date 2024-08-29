@@ -5,8 +5,9 @@ import (
 	"net/netip"
 	"path/filepath"
 
-	natmock "github.com/cybozu-go/pona/internal/nat/mock"
-	tunnelmock "github.com/cybozu-go/pona/internal/tunnel/mock"
+	"github.com/cybozu-go/pona/internal/constants"
+	natmock "github.com/cybozu-go/pona/pkg/nat/mock"
+	tunnelmock "github.com/cybozu-go/pona/pkg/tunnel/mock"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
@@ -49,7 +50,7 @@ var _ = Describe("Pod Watcher", func() {
 			}
 
 			pod.Annotations = map[string]string{
-				filepath.Join(EgressAnnotationPrefix, egressNamespace): egressName,
+				filepath.Join(constants.EgressAnnotationPrefix, egressNamespace): egressName,
 			}
 
 			By("create pod")
