@@ -12,8 +12,6 @@ type Config struct {
 	CniEtcDir string `env:"CNI_ETC_DIR" envDefault:"/host/etc/cni/net.d"`
 	CniBinDir string `env:"CNI_BIN_DIR" envDefault:"/host/opt/cni/bin"`
 	PonaPath  string `env:"CNI_PATH" envDefault:"/pona"`
-	// CniNetConf  string `env:"CNI_NET_CONF"`
-	// CniConfName string `env:"CNI_CONF_NAME"`
 }
 
 func main() {
