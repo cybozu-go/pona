@@ -1,0 +1,31 @@
+# Build the manager binary
+FROM ghcr.io/cybozu/golang:1.22-jammy AS builder
+ARG TARGETOS
+ARG TARGETARCH
+
+WORKDIR /workspace
+
+RUN --mount=type=cache,target=/go/pkg/mod/,sharing=locked \
+    --mount=type=bind,source=go.sum,target=go.sum \
+    --mount=type=bind,source=go.mod,target=go.mod \
+    go mod download -x
+
+# Copy the go source
+
+RUN --mount=type=cache,target=/go/pkg/mod/ \
+    --mount=type=bind,target=. \
+    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o ponad cmd/ponad/main.go && \
+    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o pona cmd/pona/main.go && \
+    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o pona-installer cmd/pona-installer/main.go
+
+
+FROM ghcr.io/cybozu/ubuntu:22.04
+WORKDIR /
+RUN --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    apt-get -yy update && apt-get install -yy netbase kmod iptables iproute2
+
+COPY --from=builder /workspace/ponad /workspace/pona /workspace/pona-installer /
+USER 0:0
+
+ENTRYPOINT ["/ponad"]

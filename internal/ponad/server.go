@@ -49,6 +49,10 @@ func InterceptorLogger(l *slog.Logger) logging.Logger {
 	})
 }
 
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get
+// +kubebuilder:rbac:groups="",resources=namespaces;services,verbs=get;list;watch
+// +kubebuilder:rbac:groups=pona.cybozu.com,resources=egresses,verbs=get;list;watch
+
 type server struct {
 	cnirpc.UnimplementedCNIServer
 

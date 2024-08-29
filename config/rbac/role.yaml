@@ -5,6 +5,21 @@ metadata:
   name: egress-controller-role
 rules:
 - apiGroups:
+  - ""
+  resources:
+  - namespaces
+  - services
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - get
+- apiGroups:
   - apps
   resources:
   - deployments
