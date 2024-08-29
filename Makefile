@@ -114,6 +114,12 @@ docker-build: ## Build docker image with the manager.
 	$(CONTAINER_TOOL) build -t ${IMG_GATEWAY} -f ./dockerfiles/Dockerfile.nat-gateway .
 	$(CONTAINER_TOOL) build -t ${IMG_PONAD} -f ./dockerfiles/Dockerfile.ponad .
 
+.PHONY: kind-load
+kind-load:
+	kind load docker-image ${IMG_CONTROLLER}
+	kind load docker-image ${IMG_GATEWAY}
+	kind load docker-image ${IMG_PONAD}
+
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push ${IMG_CONTROLLER}

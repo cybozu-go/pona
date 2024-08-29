@@ -11,12 +11,12 @@ RUN --mount=type=cache,target=/go/pkg/mod/,sharing=locked \
     go mod download -x
 
 # Copy the go source
+COPY . .
 
 RUN --mount=type=cache,target=/go/pkg/mod/ \
-    --mount=type=bind,target=. \
-    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o ponad cmd/ponad/main.go && \
-    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o pona cmd/pona/main.go && \
-    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o pona-installer cmd/pona-installer/main.go
+    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o ponad ./cmd/ponad/main.go && \
+    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o pona ./cmd/pona && \
+    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o pona-installer ./cmd/pona-installer
 
 
 FROM ghcr.io/cybozu/ubuntu:22.04

@@ -40,7 +40,7 @@ func installPona(ponaPath, cniBinDir string) error {
 		return fmt.Errorf("failed to Sync: %w", err)
 	}
 
-	if err := os.Rename(g.Name(), filepath.Join(cniBinDir, "coil")); err != nil {
+	if err := os.Rename(g.Name(), filepath.Join(cniBinDir, "pona")); err != nil {
 		return fmt.Errorf("failed to rename: %w", err)
 	}
 	return nil

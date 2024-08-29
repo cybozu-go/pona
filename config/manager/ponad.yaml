@@ -66,12 +66,12 @@ spec:
         image: ponad:dev
         command:
         - "/pona-installer"
-        env:
-        - name: CNI_NETCONF
-          valueFrom:
-            configMapKeyRef:
-              name: pona-config
-              key: cni_netconf
+        # env:
+        # - name: CNI_NETCONF
+        #   valueFrom:
+        #     configMapKeyRef:
+        #       name: pona-config
+        #       key: cni_netconf
         securityContext:
           privileged: true
         volumeMounts:
