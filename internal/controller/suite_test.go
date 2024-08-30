@@ -36,7 +36,6 @@ func TestControllers(t *testing.T) {
 }
 
 var _ = BeforeSuite(func() {
-
 	l := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	logger := logr.FromSlogHandler(l.Handler())
 	slog.SetDefault(l)
