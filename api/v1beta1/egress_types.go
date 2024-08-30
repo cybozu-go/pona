@@ -36,7 +36,7 @@ type EgressSpec struct {
 	// A container named "egress" is special.  It is the main container of
 	// egress pods and usually is not meant to be modified.
 	// +optional
-	Template *PodTemplateApplyConfiguration `json:"template,omitempty"`
+	Template *EgressPodTemplate `json:"template,omitempty"`
 
 	// SessionAffinity is to specify the same field of Service for the Egress.
 	// However, the default is changed from None to ClientIP.
@@ -57,7 +57,22 @@ type EgressSpec struct {
 }
 
 type DeploymentStrategyApplyConfiguration appsv1apply.DeploymentStrategyApplyConfiguration
-type PodTemplateApplyConfiguration applycorev1.PodTemplateApplyConfiguration
+
+// EgressPodTemplate defines pod template for Egress
+//
+// This is almost the same as corev1.PodTemplate but is simplified to
+// workaround JSON patch issues.
+type EgressPodTemplate struct {
+	// Metadata defines optional labels and annotations
+	// +optional
+	Metadata `json:"metadata,omitempty"`
+
+	// Spec defines the pod template spec.
+	// +optional
+	Spec PodSpecApplyConfiguration `json:"spec,omitempty"`
+}
+
+type PodSpecApplyConfiguration applycorev1.PodSpecApplyConfiguration
 
 // EgressPDB defines PDB for Egress
 type EgressPDBSpec struct {

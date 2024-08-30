@@ -2,8 +2,8 @@ package v1beta1
 
 import "encoding/json"
 
-func (c *PodTemplateApplyConfiguration) DeepCopy() *PodTemplateApplyConfiguration {
-	out := new(PodTemplateApplyConfiguration)
+func (c *PodSpecApplyConfiguration) DeepCopy() *PodSpecApplyConfiguration {
+	out := new(PodSpecApplyConfiguration)
 	bytes, err := json.Marshal(c)
 	if err != nil {
 		panic("Failed to marshal")

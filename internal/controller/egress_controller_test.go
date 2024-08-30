@@ -16,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	appsv1apply "k8s.io/client-go/applyconfigurations/apps/v1"
+	corev1apply "k8s.io/client-go/applyconfigurations/core/v1"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -51,7 +52,8 @@ var _ = Describe("Egress Controller", func() {
 						MaxSurge:       ptr.To(intstr.FromInt(0)),
 					},
 				},
-				Template: &ponav1beta1.PodTemplateApplyConfiguration{
+				Template: &ponav1beta1.EgressPodTemplate{
+
 					Metadata: ponav1beta1.Metadata{
 						Annotations: map[string]string{
 							"ann1": "foo",
@@ -60,18 +62,18 @@ var _ = Describe("Egress Controller", func() {
 							"label1": "bar",
 						},
 					},
-					Spec: corev1.PodSpec{
-						Containers: []corev1.Container{
-							{
-								Name: "egress",
-								Resources: corev1.ResourceRequirements{
-									Limits: corev1.ResourceList{
-										"memory": resource.MustParse("400Mi"),
-									},
-								},
-							},
-						},
-					},
+					Spec: (ponav1beta1.PodSpecApplyConfiguration)(*corev1apply.PodSpec().
+						WithContainers(
+							corev1apply.Container().
+								WithName("egress").
+								WithResources(
+									corev1apply.ResourceRequirements().WithLimits(
+										corev1.ResourceList{
+											"memory": resource.MustParse("400Mi"),
+										},
+									),
+								),
+						)),
 				},
 				SessionAffinity: corev1.ServiceAffinityClientIP,
 				SessionAffinityConfig: &corev1.SessionAffinityConfig{

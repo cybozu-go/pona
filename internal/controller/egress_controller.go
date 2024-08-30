@@ -18,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	appsv1apply "k8s.io/client-go/applyconfigurations/apps/v1"
+	corev1apply "k8s.io/client-go/applyconfigurations/core/v1"
 	metav1apply "k8s.io/client-go/applyconfigurations/meta/v1"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -270,8 +271,7 @@ func (r *EgressReconciler) reconcileDeployment(ctx context.Context, eg ponav1bet
 			WithReplicas(eg.Spec.Replicas).
 			WithSelector(metav1apply.LabelSelector().WithMatchLabels(labels)).
 			WithStrategy((*appsv1apply.DeploymentStrategyApplyConfiguration)(eg.Spec.Strategy)).
-			WithTemplate(eg.Spec.Template.Template.
-				WithLabels(labels)),
+			WithTemplate(corev1apply.PodTemplateSpec().WithSpec((*corev1apply.PodSpecApplyConfiguration)(&eg.Spec.Template.Spec))),
 		)
 
 	obj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(dep)
