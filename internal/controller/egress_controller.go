@@ -13,15 +13,12 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	appsv1apply "k8s.io/client-go/applyconfigurations/apps/v1"
-	corev1apply "k8s.io/client-go/applyconfigurations/core/v1"
 	metav1apply "k8s.io/client-go/applyconfigurations/meta/v1"
-	"k8s.io/utils/pointer"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -128,7 +125,7 @@ func (r *EgressReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, err
 	}
 
-	if err := r.reconcileDeployment(ctx, &eg); err != nil {
+	if err := r.reconcileDeployment(ctx, eg); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -264,15 +261,18 @@ func (r *EgressReconciler) reconcileDeployment(ctx context.Context, eg ponav1bet
 		return err
 	}
 
+	labels := appLabels(eg.Name)
+
 	dep := appsv1apply.Deployment(eg.Name, eg.Namespace).
-		WithLabels(appLabels(eg.Name)).
+		WithLabels(labels).
 		WithOwnerReferences(owner).
 		WithSpec(appsv1apply.DeploymentSpec().
 			WithReplicas(eg.Spec.Replicas).
-			WithSelector(metav1apply.LabelSelector().WithMatchLabels(appLabels(eg.Name))).
-			WithTemplate(corev1apply.PodTemplateSpec().
-				WithLabels(appLabels(eg.Name)).
-				WithSpec(corev1apply.PodSpec())))
+			WithSelector(metav1apply.LabelSelector().WithMatchLabels(labels)).
+			WithStrategy((*appsv1apply.DeploymentStrategyApplyConfiguration)(eg.Spec.Strategy)).
+			WithTemplate(eg.Spec.Template.Template.
+				WithLabels(labels)),
+		)
 
 	obj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(dep)
 	if err != nil {
@@ -299,7 +299,7 @@ func (r *EgressReconciler) reconcileDeployment(ctx context.Context, eg ponav1bet
 
 	err = r.Patch(ctx, patch, client.Apply, &client.PatchOptions{
 		FieldManager: "egress-controller",
-		Force:        pointer.Bool(true),
+		Force:        ptr.To(true),
 	})
 
 	if err != nil {
@@ -430,115 +430,6 @@ func (r *EgressReconciler) reconcilePDB(ctx context.Context, eg *ponav1beta1.Egr
 	}
 
 	return nil
-}
-
-func (r *EgressReconciler) reconcilePodTemplate(eg *ponav1beta1.Egress, deploy *appsv1.Deployment) {
-	target := &deploy.Spec.Template
-	target.Labels = make(map[string]string)
-	if target.Annotations == nil {
-		target.Annotations = make(map[string]string)
-	}
-
-	desired := eg.Spec.Template
-	podSpec := &corev1.PodSpec{}
-	if desired != nil {
-		podSpec = desired.Spec.DeepCopy()
-		for k, v := range desired.Annotations {
-			target.Annotations[k] = v
-		}
-		for k, v := range desired.Labels {
-			target.Labels[k] = v
-		}
-	}
-
-	for k, v := range appLabels(eg.Name) {
-		target.Labels[k] = v
-	}
-
-	podSpec.ServiceAccountName = egressServiceAccountName
-	podSpec.Volumes = r.addVolumes(podSpec.Volumes)
-
-	var egressContainer *corev1.Container
-	for i := range podSpec.Containers {
-		if podSpec.Containers[i].Name != "egress" {
-			continue
-		}
-		egressContainer = &(podSpec.Containers[i])
-	}
-	if egressContainer == nil {
-		podSpec.Containers = append([]corev1.Container{{}}, podSpec.Containers...)
-		egressContainer = &(podSpec.Containers[0])
-	}
-
-	for i := range podSpec.Containers {
-		if podSpec.Containers[i].Name == "egress" {
-			continue
-		}
-		egressContainer = &(podSpec.Containers[i])
-	}
-	if egressContainer == nil {
-		podSpec.Containers = append([]corev1.Container{{}}, podSpec.Containers...)
-		egressContainer = &(podSpec.Containers[0])
-	}
-	egressContainer.Name = "egress"
-
-	if egressContainer.Image == "" {
-		egressContainer.Image = r.DefaultImage
-	}
-
-	egressContainer.Env = append(egressContainer.Env,
-		corev1.EnvVar{
-			Name:  EnvPodNamespace,
-			Value: eg.Namespace,
-		},
-		corev1.EnvVar{
-			Name:  EnvEgressName,
-			Value: eg.Name,
-		},
-		corev1.EnvVar{
-			Name: EnvAddresses,
-			ValueFrom: &corev1.EnvVarSource{
-				FieldRef: &corev1.ObjectFieldSelector{
-					FieldPath: "status.podIPs",
-				},
-			},
-		},
-	)
-	egressContainer.VolumeMounts = r.addVolumeMounts(egressContainer.VolumeMounts)
-	egressContainer.SecurityContext = &corev1.SecurityContext{
-		Privileged:             ptr.To(true),
-		ReadOnlyRootFilesystem: ptr.To(true),
-		Capabilities:           &corev1.Capabilities{Add: []corev1.Capability{"NET_ADMIN"}},
-	}
-	if egressContainer.Resources.Requests == nil {
-		egressContainer.Resources.Requests = make(corev1.ResourceList)
-	}
-	if _, ok := egressContainer.Resources.Requests[corev1.ResourceCPU]; !ok {
-		egressContainer.Resources.Requests[corev1.ResourceCPU] = resource.MustParse(egressDefaultCpuRequest)
-	}
-	if _, ok := egressContainer.Resources.Requests[corev1.ResourceMemory]; !ok {
-		egressContainer.Resources.Requests[corev1.ResourceMemory] = resource.MustParse(egressDefaultMemRequest)
-	}
-	egressContainer.Ports = []corev1.ContainerPort{
-		{Name: "metrics", ContainerPort: 8080, Protocol: corev1.ProtocolTCP},
-		{Name: "health", ContainerPort: 8081, Protocol: corev1.ProtocolTCP},
-	}
-	egressContainer.LivenessProbe = &corev1.Probe{
-		ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{
-			Path:   "/livez",
-			Port:   intstr.FromString("livez"),
-			Scheme: corev1.URISchemeHTTP,
-		}},
-	}
-	egressContainer.ReadinessProbe = &corev1.Probe{
-		ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{
-			Path:   "/readyz",
-			Port:   intstr.FromString("health"),
-			Scheme: corev1.URISchemeHTTP,
-		}},
-	}
-
-	podSpec.DeepCopyInto(&target.Spec)
 }
 
 func (r *EgressReconciler) updateStatus(ctx context.Context, eg *ponav1beta1.Egress) error {

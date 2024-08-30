@@ -1,10 +1,11 @@
 package v1beta1
 
 import (
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	appsv1apply "k8s.io/client-go/applyconfigurations/apps/v1"
+	applycorev1 "k8s.io/client-go/applyconfigurations/core/v1"
 )
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
@@ -29,13 +30,13 @@ type EgressSpec struct {
 	// Strategy describes how to replace existing pods with new ones.
 	// Ref. https://pkg.go.dev/k8s.io/api/apps/v1?tab=doc#DeploymentStrategy
 	// +optional
-	Strategy *appsv1.DeploymentStrategy `json:"strategy,omitempty"`
+	Strategy *DeploymentStrategyApplyConfiguration `json:"strategy,omitempty"`
 
 	// Template is an optional template for egress pods.
 	// A container named "egress" is special.  It is the main container of
 	// egress pods and usually is not meant to be modified.
 	// +optional
-	Template *EgressPodTemplate `json:"template,omitempty"`
+	Template *PodTemplateApplyConfiguration `json:"template,omitempty"`
 
 	// SessionAffinity is to specify the same field of Service for the Egress.
 	// However, the default is changed from None to ClientIP.
@@ -55,19 +56,8 @@ type EgressSpec struct {
 	PodDisruptionBudget *EgressPDBSpec `json:"podDisruptionBudget,omitempty"`
 }
 
-// EgressPodTemplate defines pod template for Egress
-//
-// This is almost the same as corev1.PodTemplate but is simplified to
-// workaround JSON patch issues.
-type EgressPodTemplate struct {
-	// Metadata defines optional labels and annotations
-	// +optional
-	Metadata `json:"metadata,omitempty"`
-
-	// Spec defines the pod template spec.
-	// +optional
-	Spec corev1.PodSpec `json:"spec,omitempty"`
-}
+type DeploymentStrategyApplyConfiguration appsv1apply.DeploymentStrategyApplyConfiguration
+type PodTemplateApplyConfiguration applycorev1.PodTemplateApplyConfiguration
 
 // EgressPDB defines PDB for Egress
 type EgressPDBSpec struct {

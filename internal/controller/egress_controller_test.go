@@ -15,6 +15,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	appsv1apply "k8s.io/client-go/applyconfigurations/apps/v1"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -43,14 +44,14 @@ var _ = Describe("Egress Controller", func() {
 					"10.0.0.0/8",
 				},
 				Replicas: 3,
-				Strategy: &appsv1.DeploymentStrategy{
-					Type: appsv1.RollingUpdateDeploymentStrategyType,
-					RollingUpdate: &appsv1.RollingUpdateDeployment{
+				Strategy: &ponav1beta1.DeploymentStrategyApplyConfiguration{
+					Type: ptr.To(appsv1.RollingUpdateDeploymentStrategyType),
+					RollingUpdate: &appsv1apply.RollingUpdateDeploymentApplyConfiguration{
 						MaxUnavailable: ptr.To(intstr.FromInt(2)),
 						MaxSurge:       ptr.To(intstr.FromInt(0)),
 					},
 				},
-				Template: &ponav1beta1.EgressPodTemplate{
+				Template: &ponav1beta1.PodTemplateApplyConfiguration{
 					Metadata: ponav1beta1.Metadata{
 						Annotations: map[string]string{
 							"ann1": "foo",
