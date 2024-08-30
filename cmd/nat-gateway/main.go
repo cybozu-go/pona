@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"flag"
+	"log/slog"
 	"net/netip"
 	"os"
 	"strings"
@@ -11,13 +12,13 @@ import (
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
+	"k8s.io/klog/v2"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
-	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
@@ -26,6 +27,7 @@ import (
 	"github.com/cybozu-go/pona/internal/controller"
 	"github.com/cybozu-go/pona/pkg/nat"
 	"github.com/cybozu-go/pona/pkg/tunnel/fou"
+	"github.com/go-logr/logr"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -67,13 +69,13 @@ func main() {
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 	flag.IntVar(&config.FoUPort, "fou-port", 5555, "port number for foo-over-udp tunnels")
 
-	opts := zap.Options{
-		Development: true,
-	}
-	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
-	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+	l := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	logger := logr.FromSlogHandler(l.Handler())
+	slog.SetDefault(l)
+	klog.SetLogger(logger)
+	ctrl.SetLogger(logger)
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will

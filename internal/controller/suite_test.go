@@ -2,10 +2,13 @@ package controller
 
 import (
 	"fmt"
+	"log/slog"
+	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
 
+	"github.com/go-logr/logr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -14,7 +17,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	ponav1beta1 "github.com/cybozu-go/pona/api/v1beta1"
 	// +kubebuilder:scaffold:imports
@@ -34,7 +36,11 @@ func TestControllers(t *testing.T) {
 }
 
 var _ = BeforeSuite(func() {
-	logf.SetLogger(zap.New(zap.WriteTo(GinkgoWriter), zap.UseDevMode(true)))
+
+	l := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	logger := logr.FromSlogHandler(l.Handler())
+	slog.SetDefault(l)
+	logf.SetLogger(logger)
 
 	By("bootstrapping test environment")
 	testEnv = &envtest.Environment{
