@@ -11,22 +11,30 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	appsv1apply "k8s.io/client-go/applyconfigurations/apps/v1"
+	corev1apply "k8s.io/client-go/applyconfigurations/core/v1"
+	metav1apply "k8s.io/client-go/applyconfigurations/meta/v1"
+	"k8s.io/utils/pointer"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 const (
-	labelAppName      = "app.kubernetes.io/name"
-	labelAppInstance  = "app.kubernetes.io/instance"
-	labelAppComponent = "app.kubernetes.io/component"
+	labelAppName       = "app.kubernetes.io/name"
+	labelAppInstance   = "app.kubernetes.io/instance"
+	labelAppComponent  = "app.kubernetes.io/component"
+	labelsAppCreatedBy = "app.kubernetes.io/created-by"
 )
 
 const (
@@ -248,62 +256,67 @@ func getNamespaces(egresses *ponav1beta1.EgressList) []string {
 	return namespaces
 }
 
-func (r *EgressReconciler) reconcileDeployment(ctx context.Context, eg *ponav1beta1.Egress) error {
+func (r *EgressReconciler) reconcileDeployment(ctx context.Context, eg ponav1beta1.Egress) error {
 	logger := log.FromContext(ctx)
 
-	dep := &appsv1.Deployment{}
-	dep.SetName(eg.Name)
-	dep.SetNamespace(eg.Namespace)
-
-	//TODO: server side apply
-	result, err := ctrl.CreateOrUpdate(ctx, r.Client, dep,
-		func() error {
-			if dep.DeletionTimestamp != nil {
-				return nil
-			}
-
-			if dep.Labels == nil {
-				dep.Labels = make(map[string]string)
-			}
-
-			labels := appLabels(eg.Name)
-			for k, v := range labels {
-				dep.Labels[k] = v
-			}
-
-			if dep.CreationTimestamp.IsZero() {
-				if err := ctrl.SetControllerReference(eg, dep, r.Scheme); err != nil {
-					return err
-				}
-				dep.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels}
-			}
-
-			if dep.Spec.Replicas == nil || *dep.Spec.Replicas != eg.Spec.Replicas {
-				replicas := eg.Spec.Replicas
-				dep.Spec.Replicas = &replicas
-			}
-
-			if eg.Spec.Strategy != nil {
-				eg.Spec.Strategy.DeepCopyInto(&dep.Spec.Strategy)
-			}
-
-			r.reconcilePodTemplate(eg, dep)
-			return nil
-		})
+	owner, err := controllerReference(eg, r.Scheme)
 	if err != nil {
-		return fmt.Errorf("failed to create or update deployment: %w", err)
+		return err
 	}
 
-	if result != controllerutil.OperationResultNone {
-		logger.Info("deployment is created or updated",
-			"result", result,
+	dep := appsv1apply.Deployment(eg.Name, eg.Namespace).
+		WithLabels(appLabels(eg.Name)).
+		WithOwnerReferences(owner).
+		WithSpec(appsv1apply.DeploymentSpec().
+			WithReplicas(eg.Spec.Replicas).
+			WithSelector(metav1apply.LabelSelector().WithMatchLabels(appLabels(eg.Name))).
+			WithTemplate(corev1apply.PodTemplateSpec().
+				WithLabels(appLabels(eg.Name)).
+				WithSpec(corev1apply.PodSpec())))
+
+	obj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(dep)
+	if err != nil {
+		return err
+	}
+	patch := &unstructured.Unstructured{
+		Object: obj,
+	}
+
+	var current appsv1.Deployment
+	err = r.Get(ctx, client.ObjectKey{Namespace: eg.Namespace, Name: eg.Name}, &current)
+	if err != nil && !apierrors.IsNotFound(err) {
+		return err
+	}
+
+	currApplyConfig, err := appsv1apply.ExtractDeployment(&current, "egress-controller")
+	if err != nil {
+		return err
+	}
+
+	if equality.Semantic.DeepEqual(dep, currApplyConfig) {
+		return nil
+	}
+
+	err = r.Patch(ctx, patch, client.Apply, &client.PatchOptions{
+		FieldManager: "egress-controller",
+		Force:        pointer.Bool(true),
+	})
+
+	if err != nil {
+		logger.Error(err, "unable to create or update Deployment",
 			"api_version", dep.APIVersion,
 			"kind", dep.Kind,
 			"name", dep.Name,
 			"namespace", dep.Namespace,
 		)
+		return err
 	}
-
+	logger.Info("reconcile Deployment successfully",
+		"api_version", dep.APIVersion,
+		"kind", dep.Kind,
+		"name", dep.Name,
+		"namespace", dep.Namespace,
+	)
 	return nil
 }
 
@@ -619,8 +632,24 @@ func (r *EgressReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 func appLabels(name string) map[string]string {
 	return map[string]string{
-		labelAppName:      "pona",
-		labelAppInstance:  name,
-		labelAppComponent: "egress",
+		labelAppName:       "pona",
+		labelAppInstance:   name,
+		labelAppComponent:  "egress",
+		labelsAppCreatedBy: "egress-controller",
 	}
+}
+
+func controllerReference(eg ponav1beta1.Egress, scheme *runtime.Scheme) (*metav1apply.OwnerReferenceApplyConfiguration, error) {
+	gvk, err := apiutil.GVKForObject(&eg, scheme)
+	if err != nil {
+		return nil, err
+	}
+	ref := metav1apply.OwnerReference().
+		WithAPIVersion(gvk.GroupVersion().String()).
+		WithKind(gvk.Kind).
+		WithName(eg.Name).
+		WithUID(eg.GetUID()).
+		WithBlockOwnerDeletion(true).
+		WithController(true)
+	return ref, nil
 }
