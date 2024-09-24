@@ -13,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -51,9 +52,12 @@ func main() {
 	flag.IntVar(&config.egressPort, "egress-port", 5555, "UDP port number for egress NAT")
 
 	flag.Parse()
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	slog.SetDefault(logger)
-	ctrl.SetLogger(logr.FromSlogHandler(logger.Handler()))
+
+	l := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	logger := logr.FromSlogHandler(l.Handler())
+	slog.SetDefault(l)
+	klog.SetLogger(logger)
+	ctrl.SetLogger(logger)
 
 	mgr, err := setupManager(config)
 	if err != nil {
