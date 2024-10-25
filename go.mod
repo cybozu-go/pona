@@ -1,6 +1,7 @@
 module github.com/cybozu-go/pona
 
-go 1.22.6
+go 1.23
+
 toolchain go1.23.2
 
 require (
